@@ -4,8 +4,31 @@ import Foundation
 struct BreakDayRecord: Codable, Equatable {
     var completed: Int
     var skipped: Int
+    var heldSeconds: TimeInterval
 
-    static let empty = BreakDayRecord(completed: 0, skipped: 0)
+    static let empty = BreakDayRecord(completed: 0, skipped: 0, heldSeconds: 0)
+
+    private enum CodingKeys: String, CodingKey {
+        case completed
+        case skipped
+        case heldSeconds
+    }
+
+    init(completed: Int, skipped: Int, heldSeconds: TimeInterval = 0) {
+        self.completed = completed
+        self.skipped = skipped
+        self.heldSeconds = heldSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        completed = try container.decode(Int.self, forKey: .completed)
+        skipped = try container.decode(Int.self, forKey: .skipped)
+        heldSeconds = try container.decodeIfPresent(
+            TimeInterval.self,
+            forKey: .heldSeconds
+        ) ?? 0
+    }
 }
 
 struct BreakHistoryDay: Identifiable, Equatable {
@@ -13,6 +36,7 @@ struct BreakHistoryDay: Identifiable, Equatable {
     let dateKey: String
     let completed: Int
     let skipped: Int
+    let heldSeconds: TimeInterval
 
     var id: String { dateKey }
     var total: Int { completed + skipped }
@@ -50,7 +74,8 @@ final class BreakHistoryStore: ObservableObject {
             records = decoded.mapValues { record in
                 BreakDayRecord(
                     completed: max(0, record.completed),
-                    skipped: max(0, record.skipped)
+                    skipped: max(0, record.skipped),
+                    heldSeconds: Self.sanitizedHeldSeconds(record.heldSeconds)
                 )
             }
         } else {
@@ -60,15 +85,29 @@ final class BreakHistoryStore: ObservableObject {
         pruneOlderThan30Days()
     }
 
-    func recordCompletedBreak(at date: Date = Date()) {
+    func recordCompletedBreak(
+        heldSeconds: TimeInterval = 0,
+        at date: Date = Date()
+    ) {
         updateRecord(at: date) { record in
             record.completed += 1
+            record.heldSeconds = Self.addingHeldSeconds(
+                heldSeconds,
+                to: record.heldSeconds
+            )
         }
     }
 
-    func recordSkippedBreak(at date: Date = Date()) {
+    func recordSkippedBreak(
+        heldSeconds: TimeInterval = 0,
+        at date: Date = Date()
+    ) {
         updateRecord(at: date) { record in
             record.skipped += 1
+            record.heldSeconds = Self.addingHeldSeconds(
+                heldSeconds,
+                to: record.heldSeconds
+            )
         }
     }
 
@@ -117,7 +156,8 @@ final class BreakHistoryStore: ObservableObject {
                 date: day,
                 dateKey: key,
                 completed: record.completed,
-                skipped: record.skipped
+                skipped: record.skipped,
+                heldSeconds: record.heldSeconds
             )
         }
     }
@@ -175,6 +215,23 @@ final class BreakHistoryStore: ObservableObject {
         }
 
         userDefaults.set(data, forKey: Self.defaultsKey)
+    }
+
+    private static func sanitizedHeldSeconds(_ value: TimeInterval) -> TimeInterval {
+        guard value.isFinite else {
+            return 0
+        }
+
+        return max(0, value)
+    }
+
+    private static func addingHeldSeconds(
+        _ value: TimeInterval,
+        to total: TimeInterval
+    ) -> TimeInterval {
+        let total = sanitizedHeldSeconds(total)
+        let sum = total + sanitizedHeldSeconds(value)
+        return sum.isFinite ? sum : total
     }
 
     private func dateKey(for date: Date) -> String {

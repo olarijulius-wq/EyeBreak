@@ -91,6 +91,7 @@ private struct BreakStatsView: View {
             HStack(spacing: 14) {
                 LegendItem(color: .accentColor, title: "Completed")
                 LegendItem(color: .secondary.opacity(0.55), title: "Skipped")
+                LegendItem(color: .accentColor.opacity(0.22), title: "Held")
             }
 
             WeeklyBreakBarChart(days: days)
@@ -130,6 +131,10 @@ private struct WeeklyBreakBarChart: View {
         max(1, days.map(\.total).max() ?? 0)
     }
 
+    private var maximumHeldSeconds: TimeInterval {
+        max(1, days.map(\.heldSeconds).max() ?? 0)
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let barAreaHeight = max(1, geometry.size.height - 22)
@@ -140,6 +145,18 @@ private struct WeeklyBreakBarChart: View {
                         ZStack(alignment: .bottom) {
                             RoundedRectangle(cornerRadius: 4)
                                 .fill(Color.secondary.opacity(0.10))
+
+                            if day.heldSeconds > 0 {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.accentColor.opacity(0.22))
+                                    .frame(
+                                        height: heldHeight(
+                                            day.heldSeconds,
+                                            availableHeight: barAreaHeight
+                                        )
+                                    )
+                                    .padding(.horizontal, 2)
+                            }
 
                             VStack(spacing: 1) {
                                 if day.completed > 0 {
@@ -164,12 +181,12 @@ private struct WeeklyBreakBarChart: View {
                                         )
                                 }
                             }
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 6)
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: barAreaHeight)
-                        .help(
-                            "\(day.completed) completed, \(day.skipped) skipped"
-                        )
+                        .help(daySummary(day))
 
                         Text(day.date, format: .dateTime.weekday(.narrow))
                             .font(.caption2)
@@ -179,9 +196,7 @@ private struct WeeklyBreakBarChart: View {
                     .accessibilityLabel(
                         Text(day.date, format: .dateTime.weekday(.wide))
                     )
-                    .accessibilityValue(
-                        "\(day.completed) completed, \(day.skipped) skipped"
-                    )
+                    .accessibilityValue(daySummary(day))
                 }
             }
         }
@@ -192,5 +207,45 @@ private struct WeeklyBreakBarChart: View {
         availableHeight: CGFloat
     ) -> CGFloat {
         availableHeight * CGFloat(count) / CGFloat(maximumTotal)
+    }
+
+    private func heldHeight(
+        _ seconds: TimeInterval,
+        availableHeight: CGFloat
+    ) -> CGFloat {
+        availableHeight * CGFloat(seconds / maximumHeldSeconds)
+    }
+
+    private func daySummary(_ day: BreakHistoryDay) -> String {
+        "\(day.completed) completed, \(day.skipped) skipped, "
+            + "\(durationDescription(day.heldSeconds)) held"
+    }
+
+    private func durationDescription(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds > 0 else {
+            return "0 seconds"
+        }
+
+        let roundedSeconds = seconds.rounded()
+        guard roundedSeconds < TimeInterval(Int.max) else {
+            return "a very long time"
+        }
+
+        let totalSeconds = max(0, Int(roundedSeconds))
+        let minutes = totalSeconds / 60
+        let remainingSeconds = totalSeconds % 60
+
+        if minutes > 0 {
+            let minuteUnit = minutes == 1 ? "minute" : "minutes"
+            guard remainingSeconds > 0 else {
+                return "\(minutes) \(minuteUnit)"
+            }
+
+            let secondUnit = remainingSeconds == 1 ? "second" : "seconds"
+            return "\(minutes) \(minuteUnit) \(remainingSeconds) \(secondUnit)"
+        }
+
+        let secondUnit = totalSeconds == 1 ? "second" : "seconds"
+        return "\(totalSeconds) \(secondUnit)"
     }
 }

@@ -385,7 +385,6 @@ enum HUDLayout {
     static let standardCardHeight: CGFloat = 96
     static let wideCardHeight: CGFloat = 64
     static let compactCardHeight: CGFloat = 110
-    static let exerciseCardHeight: CGFloat = 140
     static let longBreakCardHeight: CGFloat = 130
     static let notchedCardTopPadding: CGFloat = 32
     static let noNotchCardTopInset: CGFloat = 12
@@ -400,6 +399,7 @@ enum HUDLayout {
 final class HUDViewState: ObservableObject {
     static let regularDuration: TimeInterval = 20
     static let longBreakDuration: TimeInterval = 120
+    static let heldSubtitle = "Hands off — the timer is waiting"
     static let messages: [(title: String, subtitle: String)] = [
         ("Take an eye break", "Look 20 feet away for 20 seconds"),
         ("Look away", "Find something far outside the window"),
@@ -450,7 +450,7 @@ final class HUDViewState: ObservableObject {
     let completedBreaksInCycle: Int
     let currentStreak: Int
     let isNightMode: Bool
-    let isMiniMode: Bool
+    let isSilentMode: Bool
     let screenHasNotch: Bool
     let cardShape: CardShape
     let entranceStyle: EntranceStyle
@@ -462,8 +462,8 @@ final class HUDViewState: ObservableObject {
     @Published var remainingSeconds: TimeInterval
     @Published var isDismissing = false
     @Published var isPaused = false
+    @Published var isHeld = false
     @Published var theme: Theme
-    @Published var eyeExerciseEnabled: Bool
     @Published private(set) var blinkTrigger = 0
 
     let blinkTimer = Timer.publish(
@@ -475,11 +475,10 @@ final class HUDViewState: ObservableObject {
     init(
         theme: Theme,
         duration: TimeInterval,
-        eyeExerciseEnabled: Bool,
         completedBreakCount: Int,
         currentStreak: Int,
         isNightMode: Bool,
-        isMiniMode: Bool,
+        isSilentMode: Bool,
         screenHasNotch: Bool,
         date: Date,
         calendar: Calendar,
@@ -500,7 +499,7 @@ final class HUDViewState: ObservableObject {
         completedBreaksInCycle = max(0, completedBreakCount) % 4
         self.currentStreak = max(0, currentStreak)
         self.isNightMode = isNightMode
-        self.isMiniMode = isMiniMode
+        self.isSilentMode = isSilentMode
         self.screenHasNotch = screenHasNotch
         cardShape = CardShape.allCases.randomElement() ?? .squircle
         let entranceStyles = screenHasNotch
@@ -525,7 +524,6 @@ final class HUDViewState: ObservableObject {
         isSlowMotionEntrance = Int.random(in: 0..<25) == 0
         remainingSeconds = duration
         self.theme = theme
-        self.eyeExerciseEnabled = eyeExerciseEnabled
     }
 
     private static func messagePool(
@@ -569,7 +567,12 @@ final class HUDViewState: ObservableObject {
             size: 13,
             weight: .regular
         )
-        let textWidth = max(titleWidth, subtitleWidth)
+        let heldSubtitleWidth = naturalTextWidth(
+            heldSubtitle,
+            size: 13,
+            weight: .regular
+        )
+        let textWidth = max(titleWidth, subtitleWidth, heldSubtitleWidth)
         let hStackSpacing = HUDLayout.standardContentSpacing * 3
 
         return ceil(
@@ -598,10 +601,6 @@ final class HUDViewState: ObservableObject {
         return wordWidth + interwordSpacing
     }
 
-    var showsEyeExercise: Bool {
-        eyeExerciseEnabled && !isLongBreak
-    }
-
     var cardHeight: CGFloat {
         switch cardSizeVariant {
         case .wide:
@@ -610,10 +609,6 @@ final class HUDViewState: ObservableObject {
             return HUDLayout.compactCardHeight
         case .standard:
             break
-        }
-
-        if showsEyeExercise {
-            return HUDLayout.exerciseCardHeight
         }
 
         return isLongBreak
@@ -1477,9 +1472,7 @@ struct HUDView: View {
 
     @ViewBuilder
     private var cardContent: some View {
-        if state.showsEyeExercise {
-            exerciseContent
-        } else if state.cardSizeVariant == .compact {
+        if state.cardSizeVariant == .compact {
             compactStaticContent
         } else {
             staticContent
@@ -1497,14 +1490,11 @@ struct HUDView: View {
                     weight: .semibold
                 )
 
-                animatedWords(
-                    state.message.subtitle,
+                animatedSubtitle(
                     size: 13,
-                    weight: .regular,
-                    startingAt: wordCount(in: state.message.title)
+                    lineLimit: 1,
+                    minimumScaleFactor: 0.85
                 )
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
             }
 
             Spacer(minLength: HUDLayout.standardSpacerMinimumWidth)
@@ -1517,15 +1507,18 @@ struct HUDView: View {
 
     private var compactStaticContent: some View {
         HStack(spacing: 10) {
+            animatedEye
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(state.message.title)
                     .font(.system(size: 16, weight: .semibold))
                     .lineLimit(1)
 
-                Text(state.message.subtitle)
-                    .font(.system(size: 12))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.82)
+                animatedSubtitle(
+                    size: 12,
+                    lineLimit: 2,
+                    minimumScaleFactor: 0.82
+                )
             }
             .foregroundStyle(state.theme.foreground)
             .opacity(entranceTrigger > 0 ? 1 : 0)
@@ -1537,6 +1530,10 @@ struct HUDView: View {
                 .delay(0.25 * state.entranceDurationMultiplier),
                 value: entranceTrigger
             )
+            .animation(
+                .easeInOut(duration: 0.3),
+                value: state.isHeld
+            )
 
             Spacer(minLength: 2)
 
@@ -1545,27 +1542,6 @@ struct HUDView: View {
         .padding(.leading, horizontalContentPadding)
         .padding(.trailing, trailingContentPadding)
         .padding(.bottom, 6)
-    }
-
-    private var exerciseContent: some View {
-        HStack(spacing: contentSpacing) {
-            VStack(alignment: .leading, spacing: exerciseContentSpacing) {
-                animatedWords(
-                    state.message.title,
-                    size: 17,
-                    weight: .semibold
-                )
-
-                movingDotArea
-                    .frame(height: exerciseDotHeight)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            countdownRing
-        }
-        .padding(.leading, horizontalContentPadding)
-        .padding(.trailing, trailingContentPadding)
-        .padding(.bottom, exerciseBottomPadding)
     }
 
     private func animatedWords(
@@ -1603,32 +1579,36 @@ struct HUDView: View {
         .accessibilityLabel(text)
     }
 
-    private func wordCount(in text: String) -> Int {
-        text.split(whereSeparator: { $0.isWhitespace }).count
-    }
-
-    private var movingDotArea: some View {
-        GeometryReader { geometry in
-            let elapsedProgress = 1 - state.progress
-            let phase = elapsedProgress * 2 * Double.pi
-            let dotRadius: CGFloat = 6
-            let horizontalDistance = max(0, geometry.size.width - (dotRadius * 2))
-            let horizontalProgress = CGFloat((1 - cos(phase)) / 2)
-            let verticalProgress = CGFloat(sin(phase * 2))
-            let verticalAmplitude = max(
-                0,
-                min(14, (geometry.size.height / 2) - dotRadius)
-            )
-
-            Circle()
-                .fill(state.theme.accent)
-                .frame(width: dotRadius * 2, height: dotRadius * 2)
-                .position(
-                    x: dotRadius + (horizontalDistance * horizontalProgress),
-                    y: (geometry.size.height / 2) + (verticalAmplitude * verticalProgress)
+    private func animatedSubtitle(
+        size: CGFloat,
+        lineLimit: Int,
+        minimumScaleFactor: CGFloat
+    ) -> some View {
+        Text(
+            state.isHeld
+                ? HUDViewState.heldSubtitle
+                : state.message.subtitle
+        )
+            .font(.system(size: size, weight: .regular))
+            .foregroundStyle(state.theme.foreground)
+            .lineLimit(lineLimit)
+            .minimumScaleFactor(minimumScaleFactor)
+            .contentTransition(.opacity)
+            .opacity(entranceTrigger > 0 ? 1 : 0)
+            .offset(y: entranceTrigger > 0 ? 0 : 6)
+            .animation(
+                .easeOut(
+                    duration: 0.24 * state.entranceDurationMultiplier
                 )
-        }
-        .accessibilityHidden(true)
+                .delay(
+                    0.25 * state.entranceDurationMultiplier
+                ),
+                value: entranceTrigger
+            )
+            .animation(
+                .easeInOut(duration: 0.3),
+                value: state.isHeld
+            )
     }
 
     private var cycleIndicator: some View {
@@ -1689,39 +1669,6 @@ struct HUDView: View {
             : HUDLayout.standardContentSpacing
     }
 
-    private var exerciseContentSpacing: CGFloat {
-        switch state.cardSizeVariant {
-        case .standard:
-            return 8
-        case .wide:
-            return 3
-        case .compact:
-            return 6
-        }
-    }
-
-    private var exerciseDotHeight: CGFloat {
-        switch state.cardSizeVariant {
-        case .standard:
-            return 52
-        case .wide:
-            return 22
-        case .compact:
-            return 36
-        }
-    }
-
-    private var exerciseBottomPadding: CGFloat {
-        switch state.cardSizeVariant {
-        case .standard:
-            return 14
-        case .wide:
-            return 2
-        case .compact:
-            return 8
-        }
-    }
-
     private var cycleIndicatorBottomPadding: CGFloat {
         state.cardSizeVariant == .wide ? 4 : 10
     }
@@ -1767,8 +1714,8 @@ struct HUDView: View {
             ? " \(state.currentStreak) day streak."
             : ""
 
-        if state.showsEyeExercise {
-            return "\(state.message.title). Follow the moving dot with your eyes. \(cycleDescription).\(streakDescription)"
+        if state.isHeld {
+            return "\(state.message.title). \(HUDViewState.heldSubtitle). \(cycleDescription).\(streakDescription)"
         }
 
         return "\(state.message.title). \(state.message.subtitle). \(cycleDescription).\(streakDescription)"
@@ -1789,11 +1736,18 @@ struct HUDView: View {
     }
 
     private var eyeIcon: some View {
-        Image(systemName: "eye")
-            .font(.system(size: 26, weight: .semibold))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(state.theme.foreground)
-            .frame(width: HUDLayout.eyeWidth, height: HUDLayout.eyeWidth)
+        ZStack {
+            Image(systemName: "eye")
+                .opacity(state.isHeld ? 0 : 1)
+
+            Image(systemName: "eye.trianglebadge.exclamationmark")
+                .opacity(state.isHeld ? 1 : 0)
+        }
+        .font(.system(size: 26, weight: .semibold))
+        .symbolRenderingMode(.monochrome)
+        .foregroundStyle(state.theme.foreground)
+        .frame(width: HUDLayout.eyeWidth, height: HUDLayout.eyeWidth)
+        .animation(.easeInOut(duration: 0.3), value: state.isHeld)
     }
 
     private func animateFallbackBlink() {
@@ -1828,7 +1782,11 @@ struct HUDView: View {
                     )
                 )
                 .rotationEffect(.degrees(-90))
-                .opacity(state.isPaused ? 0.5 : 1)
+                .opacity(state.isHeld ? 0.35 : (state.isPaused ? 0.5 : 1))
+                .animation(
+                    .easeInOut(duration: 0.3),
+                    value: state.isHeld
+                )
 
             Text(state.displayedTime)
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -1842,6 +1800,10 @@ struct HUDView: View {
             value: isInFinalThreeSeconds
         )
         .animation(.linear(duration: 0.05), value: state.progress)
-        .accessibilityLabel("\(state.displayedSeconds) seconds remaining")
+        .accessibilityLabel(
+            state.isHeld
+                ? "Countdown held, \(state.displayedSeconds) seconds remaining"
+                : "\(state.displayedSeconds) seconds remaining"
+        )
     }
 }

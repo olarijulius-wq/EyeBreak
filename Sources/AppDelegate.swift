@@ -33,12 +33,14 @@ private enum ThemeSelection {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let selectedThemeDefaultsKey = "selectedTheme"
     private static let soundEnabledDefaultsKey = "soundEnabled"
-    private static let eyeExerciseEnabledDefaultsKey = "eyeExerciseEnabled"
     private static let escapeShortcutEnabledDefaultsKey = "escapeShortcutEnabled"
-    private static let miniModeEnabledDefaultsKey = "miniModeEnabled"
+    private static let silentModeEnabledDefaultsKey = "silentModeEnabled"
+    private static let obsoleteSilentModeDefaultsKey = "miniModeEnabled"
+    private static let removedExerciseDefaultsKey = "eyeExerciseEnabled"
     private static let nightModeEnabledDefaultsKey = "nightModeEnabled"
     private static let dimScreenEnabledDefaultsKey = "dimScreenEnabled"
     private static let calendarAwareEnabledDefaultsKey = "calendarAwareEnabled"
+    private static let requireStillnessEnabledDefaultsKey = "requireStillnessEnabled"
     private static let snoozeDuration: TimeInterval = 30 * 60
 
     private static let snoozeTimeFormatter: DateFormatter = {
@@ -48,6 +50,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return formatter
     }()
 
+    private static func loadSilentModePreference(
+        from defaults: UserDefaults
+    ) -> Bool {
+        let storedValue = defaults.object(
+            forKey: silentModeEnabledDefaultsKey
+        ) as? Bool
+        let legacyValue = defaults.object(
+            forKey: obsoleteSilentModeDefaultsKey
+        ) as? Bool
+
+        if storedValue == nil, let legacyValue {
+            defaults.set(legacyValue, forKey: silentModeEnabledDefaultsKey)
+        }
+
+        defaults.removeObject(forKey: obsoleteSilentModeDefaultsKey)
+        return storedValue ?? legacyValue ?? false
+    }
+
     private var selectedThemeRawValue = ThemeSelection.normalizedRawValue(
         UserDefaults.standard.string(
             forKey: AppDelegate.selectedThemeDefaultsKey
@@ -56,15 +76,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var soundEnabled = UserDefaults.standard.object(
         forKey: AppDelegate.soundEnabledDefaultsKey
     ) as? Bool ?? true
-    private var eyeExerciseEnabled = UserDefaults.standard.object(
-        forKey: AppDelegate.eyeExerciseEnabledDefaultsKey
-    ) as? Bool ?? true
     private var escapeShortcutEnabled = UserDefaults.standard.object(
         forKey: AppDelegate.escapeShortcutEnabledDefaultsKey
     ) as? Bool ?? false
-    private var miniModeEnabled = UserDefaults.standard.object(
-        forKey: AppDelegate.miniModeEnabledDefaultsKey
-    ) as? Bool ?? false
+    private var silentModeEnabled = AppDelegate.loadSilentModePreference(
+        from: .standard
+    )
     private var nightModeEnabled = UserDefaults.standard.object(
         forKey: AppDelegate.nightModeEnabledDefaultsKey
     ) as? Bool ?? true
@@ -74,29 +91,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var calendarAwareEnabled = UserDefaults.standard.object(
         forKey: AppDelegate.calendarAwareEnabledDefaultsKey
     ) as? Bool ?? false
+    private var requireStillnessEnabled = UserDefaults.standard.object(
+        forKey: AppDelegate.requireStillnessEnabledDefaultsKey
+    ) as? Bool ?? false
     private let breakHistoryStore = BreakHistoryStore()
     private let calendarAwareness = CalendarAwareness()
 
     private lazy var hudController = HUDPanelController(
         theme: ThemeSelection.resolve(rawValue: selectedThemeRawValue),
         soundEnabled: soundEnabled,
-        eyeExerciseEnabled: eyeExerciseEnabled,
         escapeShortcutEnabled: escapeShortcutEnabled,
         dimScreenEnabled: dimScreenEnabled,
-        onBreakCompleted: { [weak self] in
-            self?.breakHistoryStore.recordCompletedBreak()
+        requireStillnessEnabled: requireStillnessEnabled,
+        onBreakCompleted: { [weak self] timing in
+            self?.breakHistoryStore.recordCompletedBreak(
+                heldSeconds: timing.heldSeconds
+            )
         },
-        onBreakSkipped: { [weak self] in
-            self?.breakHistoryStore.recordSkippedBreak()
+        onBreakSkipped: { [weak self] timing in
+            self?.breakHistoryStore.recordSkippedBreak(
+                heldSeconds: timing.heldSeconds
+            )
         },
         onSnoozeRequested: { [weak self] in
             self?.beginSnooze()
         },
-        onMiniBreakStarted: { [weak self] in
-            self?.startMiniModeStatusPresentation()
+        onSilentBreakStarted: { [weak self] in
+            self?.startSilentModeStatusPresentation()
         },
-        onMiniBreakEnded: { [weak self] in
-            self?.stopMiniModeStatusPresentation()
+        onSilentBreakEnded: { [weak self] in
+            self?.stopSilentModeStatusPresentation()
         }
     )
     private lazy var statsPanelController = StatsPanelController(
@@ -106,16 +130,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusIconTimer: Timer?
     private var statusIconPulseGeneration = 0
     private var isStatusIconPulsing = false
-    private var miniModeStatusPulseGeneration = 0
-    private var isMiniModeBreakActive = false
+    private var silentModeStatusPulseGeneration = 0
+    private var isSilentModeBreakActive = false
     private var pauseMenuItem: NSMenuItem?
     private var adaptiveTimingMenuItem: NSMenuItem?
+    private var requireStillnessMenuItem: NSMenuItem?
     private var soundMenuItem: NSMenuItem?
-    private var miniModeMenuItem: NSMenuItem?
+    private var silentModeMenuItem: NSMenuItem?
     private var nightModeMenuItem: NSMenuItem?
     private var dimScreenMenuItem: NSMenuItem?
     private var calendarAwareMenuItem: NSMenuItem?
-    private var eyeExerciseMenuItem: NSMenuItem?
     private var escapeShortcutMenuItem: NSMenuItem?
     private var escapeShortcutEnabledMenuItem: NSMenuItem?
     private var launchAtLoginMenuItem: NSMenuItem?
@@ -146,16 +170,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        UserDefaults.standard.removeObject(
+            forKey: Self.removedExerciseDefaultsKey
+        )
         UserDefaults.standard.register(defaults: [
             BreakScheduler.breakIntervalDefaultsKey: BreakScheduler.defaultIntervalMinutes,
             HUDPanelController.breakCountDefaultsKey: 0,
             Self.soundEnabledDefaultsKey: true,
-            Self.eyeExerciseEnabledDefaultsKey: true,
             Self.escapeShortcutEnabledDefaultsKey: false,
-            Self.miniModeEnabledDefaultsKey: false,
+            Self.silentModeEnabledDefaultsKey: false,
             Self.nightModeEnabledDefaultsKey: true,
             Self.dimScreenEnabledDefaultsKey: false,
             Self.calendarAwareEnabledDefaultsKey: false,
+            Self.requireStillnessEnabledDefaultsKey: false,
             BreakScheduler.adaptiveTimingDefaultsKey: false
         ])
         breakHistoryStore.pruneOlderThan30Days()
@@ -246,6 +273,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(adaptiveItem)
         adaptiveTimingMenuItem = adaptiveItem
 
+        let requireStillnessItem = NSMenuItem(
+            title: "Require stillness",
+            action: #selector(toggleRequireStillness),
+            keyEquivalent: ""
+        )
+        requireStillnessItem.target = self
+        requireStillnessItem.state = requireStillnessEnabled ? .on : .off
+        menu.addItem(requireStillnessItem)
+        requireStillnessMenuItem = requireStillnessItem
+
         let themeItem = NSMenuItem(
             title: "Theme",
             action: nil,
@@ -292,15 +329,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(soundItem)
         soundMenuItem = soundItem
 
-        let miniModeItem = NSMenuItem(
-            title: "Mini mode",
-            action: #selector(toggleMiniMode),
+        let silentModeItem = NSMenuItem(
+            title: "Silent mode",
+            action: #selector(toggleSilentMode),
             keyEquivalent: ""
         )
-        miniModeItem.target = self
-        miniModeItem.state = miniModeEnabled ? .on : .off
-        menu.addItem(miniModeItem)
-        miniModeMenuItem = miniModeItem
+        silentModeItem.target = self
+        silentModeItem.state = silentModeEnabled ? .on : .off
+        menu.addItem(silentModeItem)
+        silentModeMenuItem = silentModeItem
 
         let nightModeItem = NSMenuItem(
             title: "Night mode",
@@ -331,16 +368,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         calendarAwareItem.state = calendarAwareEnabled ? .on : .off
         menu.addItem(calendarAwareItem)
         calendarAwareMenuItem = calendarAwareItem
-
-        let eyeExerciseItem = NSMenuItem(
-            title: "Eye exercise",
-            action: #selector(toggleEyeExercise),
-            keyEquivalent: ""
-        )
-        eyeExerciseItem.target = self
-        eyeExerciseItem.state = eyeExerciseEnabled ? .on : .off
-        menu.addItem(eyeExerciseItem)
-        eyeExerciseMenuItem = eyeExerciseItem
 
         let launchItem = NSMenuItem(
             title: "Launch at login",
@@ -496,7 +523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
         )
         hudController.show(
-            miniMode: miniModeEnabled,
+            silentMode: silentModeEnabled,
             nightModeEnabled: nightModeEnabled,
             currentStreak: breakHistoryStore.currentStreak(endingAt: now),
             at: now
@@ -531,7 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func pulseStatusItemIcon() {
         guard
-            !isMiniModeBreakActive,
+            !isSilentModeBreakActive,
             let button = statusItem?.button
         else {
             return
@@ -594,11 +621,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         isStatusIconPulsing = false
     }
 
-    private func startMiniModeStatusPresentation() {
+    private func startSilentModeStatusPresentation() {
         cancelStatusIconPulse()
-        isMiniModeBreakActive = true
-        miniModeStatusPulseGeneration += 1
-        let generation = miniModeStatusPulseGeneration
+        isSilentModeBreakActive = true
+        silentModeStatusPulseGeneration += 1
+        let generation = silentModeStatusPulseGeneration
 
         guard let button = statusItem?.button else {
             return
@@ -606,21 +633,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         setStatusItemImage(named: "eye.circle.fill", on: button)
         button.alphaValue = 1
-        animateMiniModeStatusPulse(
+        animateSilentModeStatusPulse(
             on: button,
             dimming: true,
             generation: generation
         )
     }
 
-    private func animateMiniModeStatusPulse(
+    private func animateSilentModeStatusPulse(
         on button: NSStatusBarButton,
         dimming: Bool,
         generation: Int
     ) {
         guard
-            isMiniModeBreakActive,
-            generation == miniModeStatusPulseGeneration,
+            isSilentModeBreakActive,
+            generation == silentModeStatusPulseGeneration,
             statusItem?.button === button
         else {
             return
@@ -633,13 +660,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard
                 let self,
                 let button,
-                self.isMiniModeBreakActive,
-                generation == self.miniModeStatusPulseGeneration
+                self.isSilentModeBreakActive,
+                generation == self.silentModeStatusPulseGeneration
             else {
                 return
             }
 
-            self.animateMiniModeStatusPulse(
+            self.animateSilentModeStatusPulse(
                 on: button,
                 dimming: !dimming,
                 generation: generation
@@ -647,13 +674,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func stopMiniModeStatusPresentation() {
-        guard isMiniModeBreakActive else {
+    private func stopSilentModeStatusPresentation() {
+        guard isSilentModeBreakActive else {
             return
         }
 
-        isMiniModeBreakActive = false
-        miniModeStatusPulseGeneration += 1
+        isSilentModeBreakActive = false
+        silentModeStatusPulseGeneration += 1
 
         if let button = statusItem?.button {
             button.alphaValue = 1
@@ -678,7 +705,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        guard !isMiniModeBreakActive else {
+        guard !isSilentModeBreakActive else {
             return
         }
 
@@ -748,13 +775,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         soundMenuItem?.state = soundEnabled ? .on : .off
     }
 
-    @objc private func toggleMiniMode() {
-        miniModeEnabled.toggle()
+    @objc private func toggleRequireStillness() {
+        requireStillnessEnabled.toggle()
         UserDefaults.standard.set(
-            miniModeEnabled,
-            forKey: Self.miniModeEnabledDefaultsKey
+            requireStillnessEnabled,
+            forKey: Self.requireStillnessEnabledDefaultsKey
         )
-        miniModeMenuItem?.state = miniModeEnabled ? .on : .off
+        hudController.setRequireStillnessEnabled(requireStillnessEnabled)
+        requireStillnessMenuItem?.state = requireStillnessEnabled ? .on : .off
+    }
+
+    @objc private func toggleSilentMode() {
+        silentModeEnabled.toggle()
+        UserDefaults.standard.set(
+            silentModeEnabled,
+            forKey: Self.silentModeEnabledDefaultsKey
+        )
+
+        if !silentModeEnabled {
+            _ = hudController.dismissActiveSilentBreakAsSkipped()
+        }
+
+        silentModeMenuItem?.state = silentModeEnabled ? .on : .off
     }
 
     @objc private func toggleNightMode() {
@@ -787,16 +829,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if calendarAwareEnabled {
             calendarAwareness.requestFullAccess()
         }
-    }
-
-    @objc private func toggleEyeExercise() {
-        eyeExerciseEnabled.toggle()
-        UserDefaults.standard.set(
-            eyeExerciseEnabled,
-            forKey: Self.eyeExerciseEnabledDefaultsKey
-        )
-        hudController.setEyeExerciseEnabled(eyeExerciseEnabled)
-        eyeExerciseMenuItem?.state = eyeExerciseEnabled ? .on : .off
     }
 
     @objc private func toggleEscapeShortcut() {

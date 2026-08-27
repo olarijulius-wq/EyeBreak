@@ -30,30 +30,39 @@ private final class FirstMouseHostingView<Content: View>: NSHostingView<Content>
     }
 }
 
+struct BreakTiming: Equatable {
+    let heldSeconds: TimeInterval
+    let countdownSeconds: TimeInterval
+}
+
 final class HUDPanelController: NSObject {
     static let breakCountDefaultsKey = "breakCount"
 
     private let panelSize = HUDLayout.panelSize
     private let countdownInterval: TimeInterval = 1.0 / 30.0
     private let userDefaults: UserDefaults
-    private let onBreakCompleted: () -> Void
-    private let onBreakSkipped: () -> Void
+    private let onBreakCompleted: (BreakTiming) -> Void
+    private let onBreakSkipped: (BreakTiming) -> Void
     private let onSnoozeRequested: () -> Void
-    private let onMiniBreakStarted: () -> Void
-    private let onMiniBreakEnded: () -> Void
+    private let onSilentBreakStarted: () -> Void
+    private let onSilentBreakEnded: () -> Void
     private let displayDimmingController = DisplayDimmingController()
 
     private var theme: Theme
     private var soundEnabled: Bool
-    private var eyeExerciseEnabled: Bool
     private var escapeShortcutEnabled: Bool
     private var dimScreenEnabled: Bool
+    private var requireStillnessEnabled: Bool
     private var activeBreakDisplayID: CGDirectDisplayID?
     private var panel: NonActivatingHUDPanel?
     private var viewState: HUDViewState?
     private var countdownTimer: Timer?
     private var countdownEndDate: Date?
     private var countdownPausedAt: Date?
+    private var lastCountdownTickDate: Date?
+    private var heldSeconds: TimeInterval = 0
+    private var countdownSeconds: TimeInterval = 0
+    private var didReportBreakTiming = false
     private var dismissalWorkItem: DispatchWorkItem?
     private var escapeKeyEventTap: CFMachPort?
     private var escapeKeyEventTapSource: CFRunLoopSource?
@@ -74,7 +83,7 @@ final class HUDPanelController: NSObject {
             .takeUnretainedValue()
         guard
             controller.escapeShortcutEnabled,
-            controller.viewState?.isMiniMode != true
+            controller.viewState?.isSilentMode != true
         else {
             return Unmanaged.passUnretained(event)
         }
@@ -90,27 +99,27 @@ final class HUDPanelController: NSObject {
     init(
         theme: Theme,
         soundEnabled: Bool,
-        eyeExerciseEnabled: Bool,
         escapeShortcutEnabled: Bool,
         dimScreenEnabled: Bool,
+        requireStillnessEnabled: Bool = false,
         userDefaults: UserDefaults = .standard,
-        onBreakCompleted: @escaping () -> Void = {},
-        onBreakSkipped: @escaping () -> Void = {},
+        onBreakCompleted: @escaping (BreakTiming) -> Void = { _ in },
+        onBreakSkipped: @escaping (BreakTiming) -> Void = { _ in },
         onSnoozeRequested: @escaping () -> Void = {},
-        onMiniBreakStarted: @escaping () -> Void = {},
-        onMiniBreakEnded: @escaping () -> Void = {}
+        onSilentBreakStarted: @escaping () -> Void = {},
+        onSilentBreakEnded: @escaping () -> Void = {}
     ) {
         self.theme = theme
         self.soundEnabled = soundEnabled
-        self.eyeExerciseEnabled = eyeExerciseEnabled
         self.escapeShortcutEnabled = escapeShortcutEnabled
         self.dimScreenEnabled = dimScreenEnabled
+        self.requireStillnessEnabled = requireStillnessEnabled
         self.userDefaults = userDefaults
         self.onBreakCompleted = onBreakCompleted
         self.onBreakSkipped = onBreakSkipped
         self.onSnoozeRequested = onSnoozeRequested
-        self.onMiniBreakStarted = onMiniBreakStarted
-        self.onMiniBreakEnded = onMiniBreakEnded
+        self.onSilentBreakStarted = onSilentBreakStarted
+        self.onSilentBreakEnded = onSilentBreakEnded
         super.init()
     }
 
@@ -128,11 +137,6 @@ final class HUDPanelController: NSObject {
 
     func setSoundEnabled(_ soundEnabled: Bool) {
         self.soundEnabled = soundEnabled
-    }
-
-    func setEyeExerciseEnabled(_ eyeExerciseEnabled: Bool) {
-        self.eyeExerciseEnabled = eyeExerciseEnabled
-        viewState?.eyeExerciseEnabled = eyeExerciseEnabled
     }
 
     func setEscapeShortcutEnabled(_ escapeShortcutEnabled: Bool) {
@@ -157,7 +161,37 @@ final class HUDPanelController: NSObject {
         }
     }
 
+    func setRequireStillnessEnabled(_ requireStillnessEnabled: Bool) {
+        if
+            !self.requireStillnessEnabled,
+            requireStillnessEnabled,
+            viewState?.isPaused == true
+        {
+            setPaused(false)
+        }
+
+        if
+            self.requireStillnessEnabled,
+            !requireStillnessEnabled,
+            let state = viewState,
+            !state.isDismissing,
+            state.isHeld
+        {
+            settleActiveTiming(for: state, at: Date())
+        }
+
+        self.requireStillnessEnabled = requireStillnessEnabled
+
+        if !requireStillnessEnabled {
+            viewState?.isHeld = false
+        }
+    }
+
     func setPaused(_ shouldPause: Bool) {
+        guard !requireStillnessEnabled else {
+            return
+        }
+
         guard
             let state = viewState,
             !state.isDismissing,
@@ -170,11 +204,30 @@ final class HUDPanelController: NSObject {
         let now = Date()
 
         if shouldPause {
-            state.remainingSeconds = max(0, endDate.timeIntervalSince(now))
+            var updatedEndDate = endDate
+            accountForElapsedTime(
+                until: now,
+                endDate: &updatedEndDate,
+                wasHeld: requireStillnessEnabled && state.isHeld
+            )
+            countdownEndDate = updatedEndDate
+            state.remainingSeconds = max(
+                0,
+                updatedEndDate.timeIntervalSince(now)
+            )
+            state.isHeld = false
             state.isPaused = true
             countdownPausedAt = now
+            lastCountdownTickDate = nil
             countdownTimer?.invalidate()
             countdownTimer = nil
+
+            if heldSeconds > state.duration * 3 {
+                requestDismissal(
+                    playsSound: false,
+                    completedBreak: false
+                )
+            }
             return
         }
 
@@ -186,12 +239,14 @@ final class HUDPanelController: NSObject {
 
         countdownPausedAt = nil
         state.isPaused = false
+        state.isHeld = false
+        lastCountdownTickDate = now
         startCountdownTimer()
     }
 
     @discardableResult
     func show(
-        miniMode: Bool,
+        silentMode: Bool,
         nightModeEnabled: Bool,
         currentStreak: Int,
         at date: Date = Date()
@@ -223,24 +278,22 @@ final class HUDPanelController: NSObject {
         let state = HUDViewState(
             theme: isNightMode ? .mono : theme,
             duration: duration,
-            eyeExerciseEnabled: eyeExerciseEnabled,
             completedBreakCount: completedBreakCount,
             currentStreak: currentStreak,
             isNightMode: isNightMode,
-            isMiniMode: miniMode,
+            isSilentMode: silentMode,
             screenHasNotch: screenHasNotch,
             date: now,
             calendar: calendar,
             frontmostApplicationBundleIdentifier: frontmostApplicationBundleIdentifier
         )
 
-        if miniMode {
+        if silentMode {
             viewState = state
             activeBreakDisplayID = breakDisplayID
-            countdownEndDate = now.addingTimeInterval(state.duration)
-            startCountdownTimer()
+            beginCountdown(for: state, startingAt: Date())
             dimActiveBreakIfEnabled()
-            onMiniBreakStarted()
+            onSilentBreakStarted()
             playSound(named: "Morse", volume: 0.06)
             return true
         }
@@ -323,8 +376,7 @@ final class HUDPanelController: NSObject {
         panel = newPanel
         viewState = state
         activeBreakDisplayID = breakDisplayID
-        countdownEndDate = Date().addingTimeInterval(state.duration)
-        startCountdownTimer()
+        beginCountdown(for: state, startingAt: Date())
         dimActiveBreakIfEnabled()
 
         newPanel.orderFrontRegardless()
@@ -338,7 +390,7 @@ final class HUDPanelController: NSObject {
     }
 
     func closeImmediately(restoringBrightnessImmediately: Bool = false) {
-        let wasMiniModeBreak = viewState?.isMiniMode == true
+        let wasSilentBreak = viewState?.isSilentMode == true
 
         displayDimmingController.restore(
             immediately: restoringBrightnessImmediately
@@ -350,6 +402,7 @@ final class HUDPanelController: NSObject {
         countdownTimer = nil
         countdownEndDate = nil
         countdownPausedAt = nil
+        resetBreakTiming()
 
         dismissalWorkItem?.cancel()
         dismissalWorkItem = nil
@@ -359,8 +412,8 @@ final class HUDPanelController: NSObject {
         panel = nil
         viewState = nil
 
-        if wasMiniModeBreak {
-            onMiniBreakEnded()
+        if wasSilentBreak {
+            onSilentBreakEnded()
         }
     }
 
@@ -373,14 +426,33 @@ final class HUDPanelController: NSObject {
     }
 
     @discardableResult
-    func dismissImmediatelyAsSkipped() -> Bool {
-        guard let state = viewState, !state.isDismissing else {
+    func dismissActiveSilentBreakAsSkipped() -> Bool {
+        guard viewState?.isSilentMode == true else {
             return false
         }
 
-        onBreakSkipped()
-        closeImmediately()
-        return true
+        return requestDismissal(
+            playsSound: false,
+            completedBreak: false
+        )
+    }
+
+    @discardableResult
+    func dismissImmediatelyAsSkipped() -> Bool {
+        guard viewState?.isDismissing == false else {
+            return false
+        }
+
+        let didDismiss = requestDismissal(
+            playsSound: false,
+            completedBreak: false
+        )
+
+        if didDismiss {
+            closeImmediately()
+        }
+
+        return didDismiss
     }
 
     private func position(_ panel: NSPanel, on targetScreen: NSScreen?) {
@@ -475,6 +547,65 @@ final class HUDPanelController: NSObject {
         escapeKeyEventTapRunLoop = nil
     }
 
+    private func beginCountdown(
+        for state: HUDViewState,
+        startingAt startDate: Date
+    ) {
+        resetBreakTiming()
+        countdownEndDate = startDate.addingTimeInterval(state.duration)
+        countdownPausedAt = nil
+        lastCountdownTickDate = startDate
+        state.isHeld = false
+        startCountdownTimer()
+    }
+
+    private func resetBreakTiming() {
+        lastCountdownTickDate = nil
+        heldSeconds = 0
+        countdownSeconds = 0
+        didReportBreakTiming = false
+    }
+
+    private func accountForElapsedTime(
+        until now: Date,
+        endDate: inout Date,
+        wasHeld: Bool
+    ) {
+        guard let previousTickDate = lastCountdownTickDate else {
+            lastCountdownTickDate = now
+            return
+        }
+
+        let elapsed = max(0, now.timeIntervalSince(previousTickDate))
+
+        if wasHeld {
+            endDate = endDate.addingTimeInterval(elapsed)
+            heldSeconds += elapsed
+        } else {
+            let remainingAtPreviousTick = max(
+                0,
+                endDate.timeIntervalSince(previousTickDate)
+            )
+            countdownSeconds += min(elapsed, remainingAtPreviousTick)
+        }
+
+        lastCountdownTickDate = now
+    }
+
+    private func settleActiveTiming(for state: HUDViewState, at now: Date) {
+        guard !state.isPaused, var endDate = countdownEndDate else {
+            return
+        }
+
+        accountForElapsedTime(
+            until: now,
+            endDate: &endDate,
+            wasHeld: requireStillnessEnabled && state.isHeld
+        )
+        countdownEndDate = endDate
+        state.remainingSeconds = max(0, endDate.timeIntervalSince(now))
+    }
+
     private func startCountdownTimer() {
         countdownTimer?.invalidate()
 
@@ -495,15 +626,34 @@ final class HUDPanelController: NSObject {
         }
 
         guard
-            let endDate = countdownEndDate,
+            var endDate = countdownEndDate,
             let state = viewState,
             !state.isDismissing
         else {
             return
         }
 
-        let remaining = max(0, endDate.timeIntervalSinceNow)
+        let now = Date()
+        let shouldHold = requireStillnessEnabled
+            && PresentationGuard.secondsSinceLastInput() < 1
+        accountForElapsedTime(
+            until: now,
+            endDate: &endDate,
+            wasHeld: shouldHold
+        )
+        countdownEndDate = endDate
+        state.isHeld = shouldHold
+
+        let remaining = max(0, endDate.timeIntervalSince(now))
         state.remainingSeconds = remaining
+
+        if heldSeconds > state.duration * 3 {
+            requestDismissal(
+                playsSound: false,
+                completedBreak: false
+            )
+            return
+        }
 
         if remaining <= 0 {
             requestDismissal(
@@ -518,17 +668,32 @@ final class HUDPanelController: NSObject {
         playsSound: Bool,
         completedBreak: Bool
     ) -> Bool {
-        guard let state = viewState, !state.isDismissing else {
+        guard
+            let state = viewState,
+            !state.isDismissing,
+            !didReportBreakTiming
+        else {
             return false
         }
+
+        settleActiveTiming(for: state, at: Date())
+        let timing = BreakTiming(
+            heldSeconds: heldSeconds,
+            countdownSeconds: countdownSeconds
+        )
+        didReportBreakTiming = true
 
         countdownTimer?.invalidate()
         countdownTimer = nil
         countdownEndDate = nil
         countdownPausedAt = nil
+        lastCountdownTickDate = nil
+        heldSeconds = 0
+        countdownSeconds = 0
 
         state.isDismissing = true
         state.isPaused = false
+        state.isHeld = false
 
         if completedBreak {
             let completedBreakCount = max(
@@ -539,17 +704,17 @@ final class HUDPanelController: NSObject {
                 completedBreakCount + 1,
                 forKey: Self.breakCountDefaultsKey
             )
-            onBreakCompleted()
+            onBreakCompleted(timing)
             playSound(named: "Blow", volume: 0.05)
         } else {
-            onBreakSkipped()
+            onBreakSkipped(timing)
 
             if playsSound {
                 playSound(named: "Pop", volume: 0.06)
             }
         }
 
-        if state.isMiniMode {
+        if state.isSilentMode {
             closeImmediately()
             return true
         }
