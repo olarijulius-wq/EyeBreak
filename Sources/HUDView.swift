@@ -93,11 +93,16 @@ enum Theme: String, CaseIterable {
     }
 
     var accent: Color {
+        accent(saturationScale: 1)
+    }
+
+    func accent(saturationScale: Double) -> Color {
         let components = accentComponents
 
         return Color(
             hue: components.hue,
-            saturation: components.saturation,
+            saturation: components.saturation
+                * min(max(saturationScale, 0), 1),
             brightness: components.brightness
         )
     }
@@ -396,6 +401,27 @@ enum HUDLayout {
     static let cardSizeVariantWidthAdjustment: CGFloat = 140
 }
 
+enum FocusExercisePhase: CaseIterable, Equatable {
+    case initialFar
+    case near
+    case finalFar
+
+    var subtitle: String {
+        switch self {
+        case .initialFar:
+            return "Look at something far away"
+        case .near:
+            return "Now look at your fingertip, arm's length"
+        case .finalFar:
+            return "Back to something far away"
+        }
+    }
+
+    var accentSaturationScale: Double {
+        self == .near ? 0.6 : 1
+    }
+}
+
 final class HUDViewState: ObservableObject {
     static let regularDuration: TimeInterval = 20
     static let longBreakDuration: TimeInterval = 120
@@ -451,19 +477,22 @@ final class HUDViewState: ObservableObject {
     let currentStreak: Int
     let isNightMode: Bool
     let isSilentMode: Bool
+    let isInformational: Bool
     let screenHasNotch: Bool
     let cardShape: CardShape
     let entranceStyle: EntranceStyle
     let exitStyle: ExitStyle
     let cardSizeVariant: CardSizeVariant
     let isSlowMotionEntrance: Bool
-    private let naturalCardWidth: CGFloat
+    private let standardNaturalCardWidth: CGFloat
+    private let focusExerciseNaturalCardWidth: CGFloat
     private(set) var entranceStartedAt: Date?
     @Published var remainingSeconds: TimeInterval
     @Published var isDismissing = false
     @Published var isPaused = false
     @Published var isHeld = false
     @Published var theme: Theme
+    @Published var focusExerciseEnabled: Bool
     @Published private(set) var blinkTrigger = 0
 
     let blinkTimer = Timer.publish(
@@ -475,6 +504,7 @@ final class HUDViewState: ObservableObject {
     init(
         theme: Theme,
         duration: TimeInterval,
+        focusExerciseEnabled: Bool,
         completedBreakCount: Int,
         currentStreak: Int,
         isNightMode: Bool,
@@ -482,20 +512,39 @@ final class HUDViewState: ObservableObject {
         screenHasNotch: Bool,
         date: Date,
         calendar: Calendar,
-        frontmostApplicationBundleIdentifier: String?
+        frontmostApplicationBundleIdentifier: String?,
+        messageOverride: (title: String, subtitle: String)? = nil,
+        isInformational: Bool = false
     ) {
         self.duration = duration
-        isLongBreak = duration == Self.longBreakDuration
+        self.isInformational = isInformational
+        isLongBreak = !isInformational
+            && duration == Self.longBreakDuration
 
-        let messagePool = Self.messagePool(
-            isLongBreak: isLongBreak,
-            date: date,
-            calendar: calendar,
-            frontmostApplicationBundleIdentifier: frontmostApplicationBundleIdentifier
-        )
-        let selectedMessage = messagePool.randomElement() ?? messagePool[0]
+        let selectedMessage: (title: String, subtitle: String)
+
+        if let messageOverride {
+            selectedMessage = messageOverride
+        } else {
+            let messagePool = Self.messagePool(
+                isLongBreak: isLongBreak,
+                date: date,
+                calendar: calendar,
+                frontmostApplicationBundleIdentifier: frontmostApplicationBundleIdentifier
+            )
+            selectedMessage = messagePool.randomElement() ?? messagePool[0]
+        }
+
         message = selectedMessage
-        naturalCardWidth = Self.naturalCardWidth(for: selectedMessage)
+        standardNaturalCardWidth = Self.naturalCardWidth(
+            for: selectedMessage
+        )
+        focusExerciseNaturalCardWidth = Self.naturalCardWidth(
+            for: selectedMessage,
+            additionalSubtitles: FocusExercisePhase.allCases.map {
+                $0.subtitle
+            }
+        )
         completedBreaksInCycle = max(0, completedBreakCount) % 4
         self.currentStreak = max(0, currentStreak)
         self.isNightMode = isNightMode
@@ -524,6 +573,7 @@ final class HUDViewState: ObservableObject {
         isSlowMotionEntrance = Int.random(in: 0..<25) == 0
         remainingSeconds = duration
         self.theme = theme
+        self.focusExerciseEnabled = focusExerciseEnabled
     }
 
     private static func messagePool(
@@ -555,18 +605,23 @@ final class HUDViewState: ObservableObject {
     }
 
     private static func naturalCardWidth(
-        for message: (title: String, subtitle: String)
+        for message: (title: String, subtitle: String),
+        additionalSubtitles: [String] = []
     ) -> CGFloat {
         let titleWidth = naturalTextWidth(
             message.title,
             size: 17,
             weight: .semibold
         )
-        let subtitleWidth = naturalTextWidth(
-            message.subtitle,
-            size: 13,
-            weight: .regular
-        )
+        let subtitleWidth = ([message.subtitle] + additionalSubtitles)
+            .map {
+                naturalTextWidth(
+                    $0,
+                    size: 13,
+                    weight: .regular
+                )
+            }
+            .max() ?? 0
         let heldSubtitleWidth = naturalTextWidth(
             heldSubtitle,
             size: 13,
@@ -617,6 +672,9 @@ final class HUDViewState: ObservableObject {
     }
 
     var cardSize: CGSize {
+        let naturalCardWidth = showsFocusExercise
+            ? focusExerciseNaturalCardWidth
+            : standardNaturalCardWidth
         let desiredWidth: CGFloat
 
         switch cardSizeVariant {
@@ -665,6 +723,48 @@ final class HUDViewState: ObservableObject {
 
     var progress: Double {
         min(max(remainingSeconds / duration, 0), 1)
+    }
+
+    var showsFocusExercise: Bool {
+        focusExerciseEnabled
+            && !isInformational
+            && duration == Self.regularDuration
+    }
+
+    var focusExercisePhase: FocusExercisePhase? {
+        guard showsFocusExercise else {
+            return nil
+        }
+
+        let elapsedSeconds = duration - remainingSeconds
+
+        if elapsedSeconds < 10 {
+            return .initialFar
+        }
+
+        if elapsedSeconds < 15 {
+            return .near
+        }
+
+        return .finalFar
+    }
+
+    var displayedSubtitle: String {
+        if isHeld {
+            return Self.heldSubtitle
+        }
+
+        return focusExercisePhase?.subtitle ?? message.subtitle
+    }
+
+    var countdownAccent: Color {
+        guard let focusExercisePhase else {
+            return theme.countdownAccent(progress: progress)
+        }
+
+        return theme.accent(
+            saturationScale: focusExercisePhase.accentSaturationScale
+        )
     }
 
     var displayedSeconds: Int {
@@ -800,7 +900,11 @@ struct HUDView: View {
             )
             .offset(y: dragOffset)
             .gesture(cardDragGesture)
-            .help("Right-click to snooze breaks for 30 minutes")
+            .help(
+                state.isInformational
+                    ? ""
+                    : "Right-click to snooze breaks for 30 minutes"
+            )
             .onHover(perform: onHoverChanged)
             .padding(.top, state.cardTopPadding)
             .frame(
@@ -822,13 +926,22 @@ struct HUDView: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(cardAccessibilityLabel)
-            .accessibilityHint("Right-click to snooze breaks for 30 minutes")
+            .accessibilityHint(
+                state.isInformational
+                    ? ""
+                    : "Right-click to snooze breaks for 30 minutes"
+            )
     }
 
     private var cardDragGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
-                guard !state.isDismissing else { return }
+                guard
+                    !state.isDismissing,
+                    !state.isInformational
+                else {
+                    return
+                }
                 dragOffset = rubberBandOffset(for: value.translation.height)
                 maximumDragTranslation = max(
                     maximumDragTranslation,
@@ -836,6 +949,10 @@ struct HUDView: View {
                 )
             }
             .onEnded { value in
+                guard !state.isInformational else {
+                    return
+                }
+
                 let totalTranslation = max(
                     maximumDragTranslation,
                     hypot(value.translation.width, value.translation.height)
@@ -1458,8 +1575,10 @@ struct HUDView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                cycleIndicator
-                    .padding(.bottom, cycleIndicatorBottomPadding)
+                if !state.isInformational {
+                    cycleIndicator
+                        .padding(.bottom, cycleIndicatorBottomPadding)
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 if state.currentStreak >= 3 {
@@ -1584,11 +1703,7 @@ struct HUDView: View {
         lineLimit: Int,
         minimumScaleFactor: CGFloat
     ) -> some View {
-        Text(
-            state.isHeld
-                ? HUDViewState.heldSubtitle
-                : state.message.subtitle
-        )
+        Text(state.displayedSubtitle)
             .font(.system(size: size, weight: .regular))
             .foregroundStyle(state.theme.foreground)
             .lineLimit(lineLimit)
@@ -1606,8 +1721,8 @@ struct HUDView: View {
                 value: entranceTrigger
             )
             .animation(
-                .easeInOut(duration: 0.3),
-                value: state.isHeld
+                .easeInOut(duration: 0.4),
+                value: state.displayedSubtitle
             )
     }
 
@@ -1709,16 +1824,16 @@ struct HUDView: View {
     }
 
     private var cardAccessibilityLabel: String {
+        if state.isInformational {
+            return "\(state.message.title). \(state.displayedSubtitle)."
+        }
+
         let cycleDescription = "\(state.completedBreaksInCycle) of 4 breaks completed"
         let streakDescription = state.currentStreak >= 3
             ? " \(state.currentStreak) day streak."
             : ""
 
-        if state.isHeld {
-            return "\(state.message.title). \(HUDViewState.heldSubtitle). \(cycleDescription).\(streakDescription)"
-        }
-
-        return "\(state.message.title). \(state.message.subtitle). \(cycleDescription).\(streakDescription)"
+        return "\(state.message.title). \(state.displayedSubtitle). \(cycleDescription).\(streakDescription)"
     }
 
     @ViewBuilder
@@ -1775,11 +1890,15 @@ struct HUDView: View {
             Circle()
                 .trim(from: 0, to: state.progress)
                 .stroke(
-                    state.theme.countdownAccent(progress: state.progress),
+                    state.countdownAccent,
                     style: StrokeStyle(
                         lineWidth: lineWidth,
                         lineCap: .round
                     )
+                )
+                .animation(
+                    .easeInOut(duration: 0.4),
+                    value: state.focusExercisePhase
                 )
                 .rotationEffect(.degrees(-90))
                 .opacity(state.isHeld ? 0.35 : (state.isPaused ? 0.5 : 1))

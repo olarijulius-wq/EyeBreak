@@ -50,6 +50,7 @@ final class HUDPanelController: NSObject {
 
     private var theme: Theme
     private var soundEnabled: Bool
+    private var focusExerciseEnabled: Bool
     private var escapeShortcutEnabled: Bool
     private var dimScreenEnabled: Bool
     private var requireStillnessEnabled: Bool
@@ -64,6 +65,7 @@ final class HUDPanelController: NSObject {
     private var countdownSeconds: TimeInterval = 0
     private var didReportBreakTiming = false
     private var dismissalWorkItem: DispatchWorkItem?
+    private var informationalExpirationHandler: (() -> Void)?
     private var escapeKeyEventTap: CFMachPort?
     private var escapeKeyEventTapSource: CFRunLoopSource?
     private var escapeKeyEventTapRunLoop: CFRunLoop?
@@ -83,7 +85,8 @@ final class HUDPanelController: NSObject {
             .takeUnretainedValue()
         guard
             controller.escapeShortcutEnabled,
-            controller.viewState?.isSilentMode != true
+            controller.viewState?.isSilentMode != true,
+            controller.viewState?.isInformational != true
         else {
             return Unmanaged.passUnretained(event)
         }
@@ -99,6 +102,7 @@ final class HUDPanelController: NSObject {
     init(
         theme: Theme,
         soundEnabled: Bool,
+        focusExerciseEnabled: Bool,
         escapeShortcutEnabled: Bool,
         dimScreenEnabled: Bool,
         requireStillnessEnabled: Bool = false,
@@ -111,6 +115,7 @@ final class HUDPanelController: NSObject {
     ) {
         self.theme = theme
         self.soundEnabled = soundEnabled
+        self.focusExerciseEnabled = focusExerciseEnabled
         self.escapeShortcutEnabled = escapeShortcutEnabled
         self.dimScreenEnabled = dimScreenEnabled
         self.requireStillnessEnabled = requireStillnessEnabled
@@ -139,11 +144,20 @@ final class HUDPanelController: NSObject {
         self.soundEnabled = soundEnabled
     }
 
+    func setFocusExerciseEnabled(_ focusExerciseEnabled: Bool) {
+        self.focusExerciseEnabled = focusExerciseEnabled
+        viewState?.focusExerciseEnabled = focusExerciseEnabled
+    }
+
     func setEscapeShortcutEnabled(_ escapeShortcutEnabled: Bool) {
         self.escapeShortcutEnabled = escapeShortcutEnabled
 
         if escapeShortcutEnabled {
-            if panel != nil, viewState?.isDismissing == false {
+            if
+                panel != nil,
+                viewState?.isDismissing == false,
+                viewState?.isInformational != true
+            {
                 installEscapeKeyMonitors()
             }
         } else {
@@ -278,6 +292,7 @@ final class HUDPanelController: NSObject {
         let state = HUDViewState(
             theme: isNightMode ? .mono : theme,
             duration: duration,
+            focusExerciseEnabled: focusExerciseEnabled,
             completedBreakCount: completedBreakCount,
             currentStreak: currentStreak,
             isNightMode: isNightMode,
@@ -298,15 +313,84 @@ final class HUDPanelController: NSObject {
             return true
         }
 
+        return presentVisibleHUD(
+            state,
+            on: targetScreen,
+            breakDisplayID: breakDisplayID
+        )
+    }
+
+    @discardableResult
+    func showFirstRunNotice(
+        title: String,
+        subtitle: String,
+        duration: TimeInterval = 6,
+        at date: Date = Date(),
+        onExpiration: @escaping () -> Void = {}
+    ) -> Bool {
+        if let viewState, !viewState.isDismissing {
+            return false
+        }
+
+        closeImmediately()
+
+        let targetScreen = Self.screenContainingMouse()
+        let screenHasNotch = (targetScreen?.safeAreaInsets.top ?? 0) > 0
+        let state = HUDViewState(
+            theme: theme,
+            duration: max(0.1, duration),
+            focusExerciseEnabled: false,
+            completedBreakCount: max(
+                0,
+                userDefaults.integer(forKey: Self.breakCountDefaultsKey)
+            ),
+            currentStreak: 0,
+            isNightMode: false,
+            isSilentMode: false,
+            screenHasNotch: screenHasNotch,
+            date: date,
+            calendar: .autoupdatingCurrent,
+            frontmostApplicationBundleIdentifier: nil,
+            messageOverride: (title: title, subtitle: subtitle),
+            isInformational: true
+        )
+
+        informationalExpirationHandler = onExpiration
+        let didPresent = presentVisibleHUD(
+            state,
+            on: targetScreen,
+            breakDisplayID: nil
+        )
+
+        if !didPresent {
+            informationalExpirationHandler = nil
+        }
+
+        return didPresent
+    }
+
+    private func presentVisibleHUD(
+        _ state: HUDViewState,
+        on targetScreen: NSScreen?,
+        breakDisplayID: CGDirectDisplayID?
+    ) -> Bool {
         let rootView = HUDView(
             state: state,
             onDismiss: { [weak self] in
+                guard !state.isInformational else {
+                    return
+                }
+
                 self?.requestDismissal(
                     playsSound: true,
                     completedBreak: false
                 )
             },
             onHoverChanged: { [weak self] isHovering in
+                guard !state.isInformational else {
+                    return
+                }
+
                 self?.setPaused(isHovering)
             }
         )
@@ -316,6 +400,7 @@ final class HUDPanelController: NSObject {
             guard
                 let state,
                 !state.isDismissing,
+                !state.isInformational,
                 state.hasCompletedEntrance
             else {
                 return false
@@ -344,6 +429,10 @@ final class HUDPanelController: NSObject {
                 .contains(localPoint)
         }
         hostingView.onRightClick = { [weak self] in
+            guard !state.isInformational else {
+                return
+            }
+
             guard self?.dismissAsSkipped() == true else {
                 return
             }
@@ -375,15 +464,23 @@ final class HUDPanelController: NSObject {
 
         panel = newPanel
         viewState = state
-        activeBreakDisplayID = breakDisplayID
+        activeBreakDisplayID = state.isInformational
+            ? nil
+            : breakDisplayID
         beginCountdown(for: state, startingAt: Date())
-        dimActiveBreakIfEnabled()
+
+        if !state.isInformational {
+            dimActiveBreakIfEnabled()
+        }
 
         newPanel.orderFrontRegardless()
-        playSound(named: "Morse", volume: 0.06)
 
-        if escapeShortcutEnabled {
-            installEscapeKeyMonitors()
+        if !state.isInformational {
+            playSound(named: "Morse", volume: 0.06)
+
+            if escapeShortcutEnabled {
+                installEscapeKeyMonitors()
+            }
         }
 
         return true
@@ -406,6 +503,7 @@ final class HUDPanelController: NSObject {
 
         dismissalWorkItem?.cancel()
         dismissalWorkItem = nil
+        informationalExpirationHandler = nil
 
         panel?.orderOut(nil)
         panel?.close()
@@ -634,7 +732,8 @@ final class HUDPanelController: NSObject {
         }
 
         let now = Date()
-        let shouldHold = requireStillnessEnabled
+        let shouldHold = !state.isInformational
+            && requireStillnessEnabled
             && PresentationGuard.secondsSinceLastInput() < 1
         accountForElapsedTime(
             until: now,
@@ -695,7 +794,19 @@ final class HUDPanelController: NSObject {
         state.isPaused = false
         state.isHeld = false
 
-        if completedBreak {
+        let informationalExpiration = state.isInformational
+            && completedBreak
+            ? informationalExpirationHandler
+            : nil
+
+        if state.isInformational {
+            informationalExpirationHandler = nil
+        }
+
+        if state.isInformational {
+            // Informational HUDs use the countdown animation but do not
+            // participate in break cadence, history, or sounds.
+        } else if completedBreak {
             let completedBreakCount = max(
                 0,
                 userDefaults.integer(forKey: Self.breakCountDefaultsKey)
@@ -713,6 +824,8 @@ final class HUDPanelController: NSObject {
                 playSound(named: "Pop", volume: 0.06)
             }
         }
+
+        informationalExpiration?()
 
         if state.isSilentMode {
             closeImmediately()

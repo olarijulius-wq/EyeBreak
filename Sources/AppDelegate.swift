@@ -33,6 +33,7 @@ private enum ThemeSelection {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let selectedThemeDefaultsKey = "selectedTheme"
     private static let soundEnabledDefaultsKey = "soundEnabled"
+    private static let focusExerciseEnabledDefaultsKey = "focusExerciseEnabled"
     private static let escapeShortcutEnabledDefaultsKey = "escapeShortcutEnabled"
     private static let silentModeEnabledDefaultsKey = "silentModeEnabled"
     private static let obsoleteSilentModeDefaultsKey = "miniModeEnabled"
@@ -41,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let dimScreenEnabledDefaultsKey = "dimScreenEnabled"
     private static let calendarAwareEnabledDefaultsKey = "calendarAwareEnabled"
     private static let requireStillnessEnabledDefaultsKey = "requireStillnessEnabled"
+    private static let hasLaunchedBeforeDefaultsKey = "hasLaunchedBefore"
+    private static let firstRunNoticeDuration: TimeInterval = 6
     private static let snoozeDuration: TimeInterval = 30 * 60
 
     private static let snoozeTimeFormatter: DateFormatter = {
@@ -76,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var soundEnabled = UserDefaults.standard.object(
         forKey: AppDelegate.soundEnabledDefaultsKey
     ) as? Bool ?? true
+    private var focusExerciseEnabled = UserDefaults.standard.object(
+        forKey: AppDelegate.focusExerciseEnabledDefaultsKey
+    ) as? Bool ?? true
     private var escapeShortcutEnabled = UserDefaults.standard.object(
         forKey: AppDelegate.escapeShortcutEnabledDefaultsKey
     ) as? Bool ?? false
@@ -100,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var hudController = HUDPanelController(
         theme: ThemeSelection.resolve(rawValue: selectedThemeRawValue),
         soundEnabled: soundEnabled,
+        focusExerciseEnabled: focusExerciseEnabled,
         escapeShortcutEnabled: escapeShortcutEnabled,
         dimScreenEnabled: dimScreenEnabled,
         requireStillnessEnabled: requireStillnessEnabled,
@@ -136,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var adaptiveTimingMenuItem: NSMenuItem?
     private var requireStillnessMenuItem: NSMenuItem?
     private var soundMenuItem: NSMenuItem?
+    private var focusExerciseMenuItem: NSMenuItem?
     private var silentModeMenuItem: NSMenuItem?
     private var nightModeMenuItem: NSMenuItem?
     private var dimScreenMenuItem: NSMenuItem?
@@ -170,13 +178,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        UserDefaults.standard.removeObject(
+        let defaults = UserDefaults.standard
+        let isFirstLaunch = defaults.object(
+            forKey: Self.hasLaunchedBeforeDefaultsKey
+        ) == nil
+
+        defaults.removeObject(
             forKey: Self.removedExerciseDefaultsKey
         )
-        UserDefaults.standard.register(defaults: [
+        defaults.register(defaults: [
             BreakScheduler.breakIntervalDefaultsKey: BreakScheduler.defaultIntervalMinutes,
             HUDPanelController.breakCountDefaultsKey: 0,
             Self.soundEnabledDefaultsKey: true,
+            Self.focusExerciseEnabledDefaultsKey: true,
             Self.escapeShortcutEnabledDefaultsKey: false,
             Self.silentModeEnabledDefaultsKey: false,
             Self.nightModeEnabledDefaultsKey: true,
@@ -187,7 +201,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ])
         breakHistoryStore.pruneOlderThan30Days()
         configureStatusItem()
-        scheduler.start()
+
+        if isFirstLaunch {
+            defaults.set(
+                true,
+                forKey: Self.hasLaunchedBeforeDefaultsKey
+            )
+            hudController.showFirstRunNotice(
+                title: "EyeBreak is running",
+                subtitle: "Look for the eye in your menu bar",
+                duration: Self.firstRunNoticeDuration
+            ) { [weak self] in
+                guard
+                    let self,
+                    !self.scheduler.isPaused,
+                    self.scheduler.nextFireDate == nil
+                else {
+                    return
+                }
+
+                self.scheduler.start()
+                self.updateStatusItemIcon()
+            }
+        } else {
+            scheduler.start()
+        }
+
         startStatusIconTimer()
     }
 
@@ -240,6 +279,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         snoozeItem.target = self
         menu.addItem(snoozeItem)
 
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(
+            title: "Settings",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let settingsMenu = NSMenu(title: "Settings")
+        settingsItem.submenu = settingsMenu
+        menu.addItem(settingsItem)
+
         let intervalItem = NSMenuItem(
             title: "Interval",
             action: nil,
@@ -261,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         intervalItem.submenu = intervalMenu
-        menu.addItem(intervalItem)
+        settingsMenu.addItem(intervalItem)
 
         let adaptiveItem = NSMenuItem(
             title: "Adaptive timing",
@@ -270,7 +320,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         adaptiveItem.target = self
         adaptiveItem.state = scheduler.adaptiveTimingEnabled ? .on : .off
-        menu.addItem(adaptiveItem)
         adaptiveTimingMenuItem = adaptiveItem
 
         let requireStillnessItem = NSMenuItem(
@@ -280,7 +329,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         requireStillnessItem.target = self
         requireStillnessItem.state = requireStillnessEnabled ? .on : .off
-        menu.addItem(requireStillnessItem)
         requireStillnessMenuItem = requireStillnessItem
 
         let themeItem = NSMenuItem(
@@ -317,7 +365,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         themeItem.submenu = themeMenu
-        menu.addItem(themeItem)
+        settingsMenu.addItem(themeItem)
+
+        settingsMenu.addItem(.separator())
 
         let soundItem = NSMenuItem(
             title: "Sound",
@@ -326,7 +376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         soundItem.target = self
         soundItem.state = soundEnabled ? .on : .off
-        menu.addItem(soundItem)
+        settingsMenu.addItem(soundItem)
         soundMenuItem = soundItem
 
         let silentModeItem = NSMenuItem(
@@ -336,7 +386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         silentModeItem.target = self
         silentModeItem.state = silentModeEnabled ? .on : .off
-        menu.addItem(silentModeItem)
+        settingsMenu.addItem(silentModeItem)
         silentModeMenuItem = silentModeItem
 
         let nightModeItem = NSMenuItem(
@@ -346,8 +396,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         nightModeItem.target = self
         nightModeItem.state = nightModeEnabled ? .on : .off
-        menu.addItem(nightModeItem)
+        settingsMenu.addItem(nightModeItem)
         nightModeMenuItem = nightModeItem
+
+        let focusExerciseItem = NSMenuItem(
+            title: "Focus exercise",
+            action: #selector(toggleFocusExercise),
+            keyEquivalent: ""
+        )
+        focusExerciseItem.target = self
+        focusExerciseItem.state = focusExerciseEnabled ? .on : .off
+        settingsMenu.addItem(focusExerciseItem)
+        focusExerciseMenuItem = focusExerciseItem
 
         let dimScreenItem = NSMenuItem(
             title: "Dim screen",
@@ -356,7 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         dimScreenItem.target = self
         dimScreenItem.state = dimScreenEnabled ? .on : .off
-        menu.addItem(dimScreenItem)
+        settingsMenu.addItem(dimScreenItem)
         dimScreenMenuItem = dimScreenItem
 
         let calendarAwareItem = NSMenuItem(
@@ -366,8 +426,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         calendarAwareItem.target = self
         calendarAwareItem.state = calendarAwareEnabled ? .on : .off
-        menu.addItem(calendarAwareItem)
+        settingsMenu.addItem(calendarAwareItem)
         calendarAwareMenuItem = calendarAwareItem
+
+        settingsMenu.addItem(.separator())
+        settingsMenu.addItem(adaptiveItem)
+        settingsMenu.addItem(requireStillnessItem)
 
         let launchItem = NSMenuItem(
             title: "Launch at login",
@@ -376,10 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         launchItem.target = self
         launchItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(launchItem)
         launchAtLoginMenuItem = launchItem
-
-        menu.addItem(.separator())
 
         let escapeShortcutItem = NSMenuItem(
             title: "Escape shortcut",
@@ -407,9 +468,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         escapeShortcutMenu.addItem(enableEscapeItem)
 
         escapeShortcutItem.submenu = escapeShortcutMenu
-        menu.addItem(escapeShortcutItem)
+        settingsMenu.addItem(escapeShortcutItem)
         escapeShortcutMenuItem = escapeShortcutItem
         escapeShortcutEnabledMenuItem = escapeShortcutEnabledItem
+
+        settingsMenu.addItem(.separator())
+        settingsMenu.addItem(launchItem)
 
         menu.addItem(.separator())
 
@@ -773,6 +837,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         hudController.setSoundEnabled(soundEnabled)
         soundMenuItem?.state = soundEnabled ? .on : .off
+    }
+
+    @objc private func toggleFocusExercise() {
+        focusExerciseEnabled.toggle()
+        UserDefaults.standard.set(
+            focusExerciseEnabled,
+            forKey: Self.focusExerciseEnabledDefaultsKey
+        )
+        hudController.setFocusExerciseEnabled(focusExerciseEnabled)
+        focusExerciseMenuItem?.state = focusExerciseEnabled ? .on : .off
     }
 
     @objc private func toggleRequireStillness() {
