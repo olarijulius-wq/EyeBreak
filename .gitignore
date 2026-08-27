@@ -1,0 +1,5 @@
+EyeBreak.app/
+.build/
+*.icns
+EyeBreak.iconset/
+.DS_Store
