@@ -40,6 +40,7 @@ final class HUDPanelController: NSObject {
 
     private let panelSize = HUDLayout.panelSize
     private let countdownInterval: TimeInterval = 1.0 / 30.0
+    private let recentInputThreshold: TimeInterval = 2.0
     private let userDefaults: UserDefaults
     private let onBreakCompleted: (BreakTiming) -> Void
     private let onBreakSkipped: (BreakTiming) -> Void
@@ -733,8 +734,9 @@ final class HUDPanelController: NSObject {
 
         let now = Date()
         let shouldHold = !state.isInformational
+            && !state.isSilentMode
             && requireStillnessEnabled
-            && PresentationGuard.secondsSinceLastInput() < 1
+            && PresentationGuard.secondsSinceLastInput() < recentInputThreshold
         accountForElapsedTime(
             until: now,
             endDate: &endDate,

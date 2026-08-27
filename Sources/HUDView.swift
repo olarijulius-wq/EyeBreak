@@ -732,7 +732,7 @@ final class HUDViewState: ObservableObject {
     }
 
     var focusExercisePhase: FocusExercisePhase? {
-        guard showsFocusExercise else {
+        guard !isHeld, showsFocusExercise else {
             return nil
         }
 
@@ -1721,7 +1721,7 @@ struct HUDView: View {
                 value: entranceTrigger
             )
             .animation(
-                .easeInOut(duration: 0.4),
+                .easeInOut(duration: 0.3),
                 value: state.displayedSubtitle
             )
     }
