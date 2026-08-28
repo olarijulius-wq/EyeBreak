@@ -10,6 +10,7 @@ APP_BUNDLE="$APP_NAME.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+PLUGINS_DIR="$CONTENTS_DIR/PlugIns"
 BUILD_DIR="$SCRIPT_DIR/.build"
 MODULE_CACHE="$BUILD_DIR/ModuleCache"
 ICON_BUILD_DIR="$BUILD_DIR/AppIcon"
@@ -17,10 +18,15 @@ ICON_SOURCE="$ICON_BUILD_DIR/AppIcon-1024.png"
 ICONSET_DIR="$ICON_BUILD_DIR/AppIcon.iconset"
 ICON_FILE="$ICON_BUILD_DIR/AppIcon.icns"
 ICON_GENERATOR="$ICON_BUILD_DIR/generate-app-icon"
+WIDGET_NAME="EyeBreakWidget"
+WIDGET_BUNDLE="$PLUGINS_DIR/$WIDGET_NAME.appex"
+WIDGET_CONTENTS_DIR="$WIDGET_BUNDLE/Contents"
+WIDGET_MACOS_DIR="$WIDGET_CONTENTS_DIR/MacOS"
 DEFAULT_SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 SDK_PATH="${SDKROOT:-$DEFAULT_SDK_PATH}"
 ARCHITECTURE="$(uname -m)"
 SOURCE_FILES=("$SCRIPT_DIR"/Sources/*.swift)
+WIDGET_SOURCE_FILES=("$SCRIPT_DIR"/Widget/*.swift)
 
 # Some Command Line Tools installs retain a stable macOS 15 SDK alongside a
 # newer preview SDK. The stable SDK covers every API used here and can avoid a
@@ -38,8 +44,14 @@ if [ -d "$ICON_BUILD_DIR" ]; then
     rm -rf "$ICON_BUILD_DIR"
 fi
 
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$MODULE_CACHE" "$ICONSET_DIR"
+mkdir -p \
+    "$MACOS_DIR" \
+    "$RESOURCES_DIR" \
+    "$WIDGET_MACOS_DIR" \
+    "$MODULE_CACHE" \
+    "$ICONSET_DIR"
 cp "Info.plist" "$CONTENTS_DIR/Info.plist"
+cp "Widget/Info.plist" "$WIDGET_CONTENTS_DIR/Info.plist"
 
 swiftc \
     -module-cache-path "$MODULE_CACHE" \
@@ -106,8 +118,31 @@ swiftc \
     "${SOURCE_FILES[@]}" \
     -o "$MACOS_DIR/$APP_NAME"
 
+swiftc \
+    -module-cache-path "$MODULE_CACHE" \
+    -sdk "$SDK_PATH" \
+    -target "${ARCHITECTURE}-apple-macosx14.0" \
+    -swift-version 5 \
+    -O \
+    -application-extension \
+    -parse-as-library \
+    -module-name "$WIDGET_NAME" \
+    -framework Foundation \
+    -framework SwiftUI \
+    -framework WidgetKit \
+    "${WIDGET_SOURCE_FILES[@]}" \
+    -o "$WIDGET_MACOS_DIR/$WIDGET_NAME"
+
 chmod +x "$MACOS_DIR/$APP_NAME"
-codesign --force --deep --sign - "$APP_BUNDLE"
+chmod +x "$WIDGET_MACOS_DIR/$WIDGET_NAME"
+# Sign nested code first so the widget keeps its sandbox/file entitlements.
+codesign \
+    --force \
+    --sign - \
+    --entitlements "$SCRIPT_DIR/Widget/EyeBreakWidget.entitlements" \
+    "$WIDGET_BUNDLE"
+codesign --force --sign - "$APP_BUNDLE"
+codesign --verify --deep --strict "$APP_BUNDLE"
 
 echo "Built $SCRIPT_DIR/$APP_BUNDLE"
 

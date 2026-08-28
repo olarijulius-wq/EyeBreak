@@ -128,6 +128,7 @@ final class BreakHistoryStore: ObservableObject {
         }
 
         pruneOlderThan30Days()
+        WidgetSummaryWriter.write(records: records)
     }
 
     func recordCompletedBreak(
@@ -259,6 +260,10 @@ final class BreakHistoryStore: ObservableObject {
     }
 
     private func persist() {
+        defer {
+            WidgetSummaryWriter.write(records: records)
+        }
+
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
 
