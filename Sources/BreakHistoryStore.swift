@@ -1,23 +1,46 @@
 import Combine
 import Foundation
 
+enum BreakOutcome: String, Codable, Equatable {
+    case completed
+    case skipped
+}
+
+struct BreakHistoryEntry: Codable, Equatable {
+    let time: Date
+    let outcome: BreakOutcome
+}
+
 struct BreakDayRecord: Codable, Equatable {
     var completed: Int
     var skipped: Int
     var heldSeconds: TimeInterval
+    var entries: [BreakHistoryEntry]
 
-    static let empty = BreakDayRecord(completed: 0, skipped: 0, heldSeconds: 0)
+    static let empty = BreakDayRecord(
+        completed: 0,
+        skipped: 0,
+        heldSeconds: 0,
+        entries: []
+    )
 
     private enum CodingKeys: String, CodingKey {
         case completed
         case skipped
         case heldSeconds
+        case entries
     }
 
-    init(completed: Int, skipped: Int, heldSeconds: TimeInterval = 0) {
+    init(
+        completed: Int,
+        skipped: Int,
+        heldSeconds: TimeInterval = 0,
+        entries: [BreakHistoryEntry] = []
+    ) {
         self.completed = completed
         self.skipped = skipped
         self.heldSeconds = heldSeconds
+        self.entries = entries
     }
 
     init(from decoder: Decoder) throws {
@@ -28,6 +51,10 @@ struct BreakDayRecord: Codable, Equatable {
             TimeInterval.self,
             forKey: .heldSeconds
         ) ?? 0
+        entries = try container.decodeIfPresent(
+            [BreakHistoryEntry].self,
+            forKey: .entries
+        ) ?? []
     }
 }
 
@@ -37,6 +64,23 @@ struct BreakHistoryDay: Identifiable, Equatable {
     let completed: Int
     let skipped: Int
     let heldSeconds: TimeInterval
+    let entries: [BreakHistoryEntry]
+
+    init(
+        date: Date,
+        dateKey: String,
+        completed: Int,
+        skipped: Int,
+        heldSeconds: TimeInterval,
+        entries: [BreakHistoryEntry] = []
+    ) {
+        self.date = date
+        self.dateKey = dateKey
+        self.completed = completed
+        self.skipped = skipped
+        self.heldSeconds = heldSeconds
+        self.entries = entries
+    }
 
     var id: String { dateKey }
     var total: Int { completed + skipped }
@@ -75,7 +119,8 @@ final class BreakHistoryStore: ObservableObject {
                 BreakDayRecord(
                     completed: max(0, record.completed),
                     skipped: max(0, record.skipped),
-                    heldSeconds: Self.sanitizedHeldSeconds(record.heldSeconds)
+                    heldSeconds: Self.sanitizedHeldSeconds(record.heldSeconds),
+                    entries: record.entries
                 )
             }
         } else {
@@ -95,6 +140,9 @@ final class BreakHistoryStore: ObservableObject {
                 heldSeconds,
                 to: record.heldSeconds
             )
+            record.entries.append(
+                BreakHistoryEntry(time: date, outcome: .completed)
+            )
         }
     }
 
@@ -107,6 +155,9 @@ final class BreakHistoryStore: ObservableObject {
             record.heldSeconds = Self.addingHeldSeconds(
                 heldSeconds,
                 to: record.heldSeconds
+            )
+            record.entries.append(
+                BreakHistoryEntry(time: date, outcome: .skipped)
             )
         }
     }
@@ -157,7 +208,8 @@ final class BreakHistoryStore: ObservableObject {
                 dateKey: key,
                 completed: record.completed,
                 skipped: record.skipped,
-                heldSeconds: record.heldSeconds
+                heldSeconds: record.heldSeconds,
+                entries: record.entries
             )
         }
     }

@@ -30,6 +30,8 @@
     <true/>
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>EyeBreak checks for meetings so it can skip break reminders while they are in progress.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>EyeBreak uses the camera locally to detect whether you looked away during a break. No video leaves your device.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

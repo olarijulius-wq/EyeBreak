@@ -98,9 +98,11 @@ swiftc \
     -swift-version 5 \
     -O \
     -framework AppKit \
+    -framework AVFoundation \
     -framework EventKit \
     -framework ServiceManagement \
     -framework SwiftUI \
+    -framework Vision \
     "${SOURCE_FILES[@]}" \
     -o "$MACOS_DIR/$APP_NAME"
 

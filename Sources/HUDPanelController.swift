@@ -55,6 +55,7 @@ final class HUDPanelController: NSObject {
     private var escapeShortcutEnabled: Bool
     private var dimScreenEnabled: Bool
     private var requireStillnessEnabled: Bool
+    private var cameraAttentionEnabled: Bool
     private var activeBreakDisplayID: CGDirectDisplayID?
     private var panel: NonActivatingHUDPanel?
     private var viewState: HUDViewState?
@@ -70,6 +71,9 @@ final class HUDPanelController: NSObject {
     private var escapeKeyEventTap: CFMachPort?
     private var escapeKeyEventTapSource: CFRunLoopSource?
     private var escapeKeyEventTapRunLoop: CFRunLoop?
+    private var cameraAttentionDetector: CameraAttentionDetector?
+    private var cameraAttentionGeneration = 0
+    private var isFacingScreen = false
 
     private static let escapeKeyEventTapCallback: CGEventTapCallBack = {
         _, eventType, event, userInfo in
@@ -107,6 +111,7 @@ final class HUDPanelController: NSObject {
         escapeShortcutEnabled: Bool,
         dimScreenEnabled: Bool,
         requireStillnessEnabled: Bool = false,
+        cameraAttentionEnabled: Bool = false,
         userDefaults: UserDefaults = .standard,
         onBreakCompleted: @escaping (BreakTiming) -> Void = { _ in },
         onBreakSkipped: @escaping (BreakTiming) -> Void = { _ in },
@@ -120,6 +125,7 @@ final class HUDPanelController: NSObject {
         self.escapeShortcutEnabled = escapeShortcutEnabled
         self.dimScreenEnabled = dimScreenEnabled
         self.requireStillnessEnabled = requireStillnessEnabled
+        self.cameraAttentionEnabled = cameraAttentionEnabled
         self.userDefaults = userDefaults
         self.onBreakCompleted = onBreakCompleted
         self.onBreakSkipped = onBreakSkipped
@@ -130,6 +136,7 @@ final class HUDPanelController: NSObject {
     }
 
     deinit {
+        stopCameraAttention()
         removeEscapeKeyEventTap()
     }
 
@@ -177,6 +184,10 @@ final class HUDPanelController: NSObject {
     }
 
     func setRequireStillnessEnabled(_ requireStillnessEnabled: Bool) {
+        guard self.requireStillnessEnabled != requireStillnessEnabled else {
+            return
+        }
+
         if
             !self.requireStillnessEnabled,
             requireStillnessEnabled,
@@ -185,20 +196,37 @@ final class HUDPanelController: NSObject {
             setPaused(false)
         }
 
-        if
-            self.requireStillnessEnabled,
-            !requireStillnessEnabled,
-            let state = viewState,
-            !state.isDismissing,
-            state.isHeld
-        {
+        if let state = viewState, !state.isDismissing, !state.isPaused {
             settleActiveTiming(for: state, at: Date())
         }
 
         self.requireStillnessEnabled = requireStillnessEnabled
 
-        if !requireStillnessEnabled {
-            viewState?.isHeld = false
+        if let state = viewState, !state.isDismissing, !state.isPaused {
+            state.isHeld = shouldHoldCountdown(for: state)
+        }
+    }
+
+    func setCameraAttentionEnabled(_ cameraAttentionEnabled: Bool) {
+        if
+            self.cameraAttentionEnabled != cameraAttentionEnabled,
+            let state = viewState,
+            !state.isDismissing,
+            !state.isPaused
+        {
+            settleActiveTiming(for: state, at: Date())
+        }
+
+        self.cameraAttentionEnabled = cameraAttentionEnabled
+
+        if cameraAttentionEnabled {
+            startCameraAttentionIfNeeded()
+        } else {
+            stopCameraAttention()
+        }
+
+        if let state = viewState, !state.isDismissing, !state.isPaused {
+            state.isHeld = shouldHoldCountdown(for: state)
         }
     }
 
@@ -223,7 +251,7 @@ final class HUDPanelController: NSObject {
             accountForElapsedTime(
                 until: now,
                 endDate: &updatedEndDate,
-                wasHeld: requireStillnessEnabled && state.isHeld
+                wasHeld: state.isHeld
             )
             countdownEndDate = updatedEndDate
             state.remainingSeconds = max(
@@ -477,6 +505,7 @@ final class HUDPanelController: NSObject {
         newPanel.orderFrontRegardless()
 
         if !state.isInformational {
+            startCameraAttentionIfNeeded()
             playSound(named: "Morse", volume: 0.06)
 
             if escapeShortcutEnabled {
@@ -490,6 +519,7 @@ final class HUDPanelController: NSObject {
     func closeImmediately(restoringBrightnessImmediately: Bool = false) {
         let wasSilentBreak = viewState?.isSilentMode == true
 
+        stopCameraAttention()
         displayDimmingController.restore(
             immediately: restoringBrightnessImmediately
         )
@@ -699,7 +729,7 @@ final class HUDPanelController: NSObject {
         accountForElapsedTime(
             until: now,
             endDate: &endDate,
-            wasHeld: requireStillnessEnabled && state.isHeld
+            wasHeld: state.isHeld
         )
         countdownEndDate = endDate
         state.remainingSeconds = max(0, endDate.timeIntervalSince(now))
@@ -733,10 +763,7 @@ final class HUDPanelController: NSObject {
         }
 
         let now = Date()
-        let shouldHold = !state.isInformational
-            && !state.isSilentMode
-            && requireStillnessEnabled
-            && PresentationGuard.secondsSinceLastInput() < recentInputThreshold
+        let shouldHold = shouldHoldCountdown(for: state)
         accountForElapsedTime(
             until: now,
             endDate: &endDate,
@@ -761,6 +788,73 @@ final class HUDPanelController: NSObject {
                 playsSound: false,
                 completedBreak: true
             )
+        }
+    }
+
+    private func shouldHoldCountdown(for state: HUDViewState) -> Bool {
+        guard !state.isInformational, !state.isSilentMode else {
+            return false
+        }
+
+        let shouldHoldForStillness = requireStillnessEnabled
+            && PresentationGuard.secondsSinceLastInput() < recentInputThreshold
+        let shouldHoldForCamera = cameraAttentionEnabled && isFacingScreen
+        return shouldHoldForStillness || shouldHoldForCamera
+    }
+
+    private func startCameraAttentionIfNeeded() {
+        guard
+            cameraAttentionEnabled,
+            panel != nil,
+            let state = viewState,
+            !state.isDismissing,
+            !state.isInformational,
+            !state.isSilentMode
+        else {
+            return
+        }
+
+        if let cameraAttentionDetector {
+            cameraAttentionDetector.start()
+            return
+        }
+
+        cameraAttentionGeneration += 1
+        let generation = cameraAttentionGeneration
+        let detector = CameraAttentionDetector { [weak self] isFacingScreen in
+            guard
+                let self,
+                self.cameraAttentionGeneration == generation
+            else {
+                return
+            }
+
+            self.updateCameraAttention(isFacingScreen)
+        }
+        cameraAttentionDetector = detector
+        detector.start()
+    }
+
+    private func stopCameraAttention() {
+        cameraAttentionGeneration += 1
+        cameraAttentionDetector?.stop()
+        cameraAttentionDetector = nil
+        isFacingScreen = false
+    }
+
+    private func updateCameraAttention(_ isFacingScreen: Bool) {
+        guard self.isFacingScreen != isFacingScreen else {
+            return
+        }
+
+        if let state = viewState, !state.isDismissing, !state.isPaused {
+            settleActiveTiming(for: state, at: Date())
+        }
+
+        self.isFacingScreen = isFacingScreen
+
+        if let state = viewState, !state.isDismissing, !state.isPaused {
+            state.isHeld = shouldHoldCountdown(for: state)
         }
     }
 

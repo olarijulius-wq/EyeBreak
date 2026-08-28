@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let dimScreenEnabledDefaultsKey = "dimScreenEnabled"
     private static let calendarAwareEnabledDefaultsKey = "calendarAwareEnabled"
     private static let requireStillnessEnabledDefaultsKey = "requireStillnessEnabled"
+    private static let cameraAttentionEnabledDefaultsKey = "cameraAttentionEnabled"
     private static let hasLaunchedBeforeDefaultsKey = "hasLaunchedBefore"
     private static let firstRunNoticeDuration: TimeInterval = 6
     private static let snoozeDuration: TimeInterval = 30 * 60
@@ -100,6 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var requireStillnessEnabled = UserDefaults.standard.object(
         forKey: AppDelegate.requireStillnessEnabledDefaultsKey
     ) as? Bool ?? false
+    private var cameraAttentionEnabled = UserDefaults.standard.object(
+        forKey: AppDelegate.cameraAttentionEnabledDefaultsKey
+    ) as? Bool ?? false
     private let breakHistoryStore = BreakHistoryStore()
     private let calendarAwareness = CalendarAwareness()
 
@@ -110,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         escapeShortcutEnabled: escapeShortcutEnabled,
         dimScreenEnabled: dimScreenEnabled,
         requireStillnessEnabled: requireStillnessEnabled,
+        cameraAttentionEnabled: cameraAttentionEnabled,
         onBreakCompleted: { [weak self] timing in
             self?.breakHistoryStore.recordCompletedBreak(
                 heldSeconds: timing.heldSeconds
@@ -142,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pauseMenuItem: NSMenuItem?
     private var adaptiveTimingMenuItem: NSMenuItem?
     private var requireStillnessMenuItem: NSMenuItem?
+    private var cameraAttentionMenuItem: NSMenuItem?
     private var soundMenuItem: NSMenuItem?
     private var focusExerciseMenuItem: NSMenuItem?
     private var silentModeMenuItem: NSMenuItem?
@@ -197,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Self.dimScreenEnabledDefaultsKey: false,
             Self.calendarAwareEnabledDefaultsKey: false,
             Self.requireStillnessEnabledDefaultsKey: false,
+            Self.cameraAttentionEnabledDefaultsKey: false,
             BreakScheduler.adaptiveTimingDefaultsKey: false
         ])
         breakHistoryStore.pruneOlderThan30Days()
@@ -408,6 +415,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         focusExerciseItem.state = focusExerciseEnabled ? .on : .off
         settingsMenu.addItem(focusExerciseItem)
         focusExerciseMenuItem = focusExerciseItem
+
+        let cameraAttentionItem = NSMenuItem(
+            title: "Camera attention",
+            action: #selector(toggleCameraAttention),
+            keyEquivalent: ""
+        )
+        cameraAttentionItem.target = self
+        cameraAttentionItem.state = cameraAttentionEnabled ? .on : .off
+        settingsMenu.addItem(cameraAttentionItem)
+        cameraAttentionMenuItem = cameraAttentionItem
 
         let dimScreenItem = NSMenuItem(
             title: "Dim screen",
@@ -857,6 +874,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         hudController.setRequireStillnessEnabled(requireStillnessEnabled)
         requireStillnessMenuItem?.state = requireStillnessEnabled ? .on : .off
+    }
+
+    @objc private func toggleCameraAttention() {
+        cameraAttentionEnabled.toggle()
+        UserDefaults.standard.set(
+            cameraAttentionEnabled,
+            forKey: Self.cameraAttentionEnabledDefaultsKey
+        )
+        hudController.setCameraAttentionEnabled(cameraAttentionEnabled)
+        cameraAttentionMenuItem?.state = cameraAttentionEnabled ? .on : .off
+
+        guard cameraAttentionEnabled else {
+            return
+        }
+
+        CameraAttentionDetector.requestPermissionIfNeeded { [weak self] granted in
+            guard
+                granted,
+                let self,
+                self.cameraAttentionEnabled
+            else {
+                return
+            }
+
+            self.hudController.setCameraAttentionEnabled(true)
+        }
     }
 
     @objc private func toggleSilentMode() {

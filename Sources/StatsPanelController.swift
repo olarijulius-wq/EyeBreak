@@ -3,6 +3,7 @@ import SwiftUI
 
 final class StatsPanelController: NSWindowController {
     static let contentSize = NSSize(width: 400, height: 260)
+    static let expandedContentSize = NSSize(width: 400, height: 420)
 
     private let historyStore: BreakHistoryStore
 
@@ -20,12 +21,18 @@ final class StatsPanelController: NSWindowController {
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .utilityWindow
-        panel.contentViewController = NSHostingController(
-            rootView: BreakStatsView(historyStore: historyStore)
-        )
 
         super.init(window: panel)
         shouldCascadeWindows = false
+
+        panel.contentViewController = NSHostingController(
+            rootView: BreakStatsView(
+                historyStore: historyStore,
+                onDetailExpansionChanged: { [weak self] isExpanded in
+                    self?.setDetailExpanded(isExpanded)
+                }
+            )
+        )
 
         NotificationCenter.default.addObserver(
             self,
@@ -69,10 +76,41 @@ final class StatsPanelController: NSWindowController {
     @objc private func calendarContextChanged(_ notification: Notification) {
         historyStore.refreshForCurrentDay()
     }
+
+    private func setDetailExpanded(_ isExpanded: Bool) {
+        guard let window else {
+            return
+        }
+
+        let contentSize = isExpanded
+            ? Self.expandedContentSize
+            : Self.contentSize
+        let currentFrame = window.frame
+        var targetFrame = window.frameRect(
+            forContentRect: NSRect(origin: .zero, size: contentSize)
+        )
+        targetFrame.origin = NSPoint(
+            x: currentFrame.minX,
+            y: currentFrame.maxY - targetFrame.height
+        )
+
+        guard targetFrame != currentFrame else {
+            return
+        }
+
+        window.setFrame(
+            targetFrame,
+            display: true,
+            animate: window.isVisible
+        )
+    }
 }
 
 private struct BreakStatsView: View {
     @ObservedObject var historyStore: BreakHistoryStore
+    let onDetailExpansionChanged: (Bool) -> Void
+
+    @State private var selectedDayKey: String?
 
     var body: some View {
         let days = historyStore.lastSevenDays()
@@ -94,16 +132,50 @@ private struct BreakStatsView: View {
                 LegendItem(color: .accentColor.opacity(0.22), title: "Held")
             }
 
-            WeeklyBreakBarChart(days: days)
+            WeeklyBreakBarChart(
+                days: days,
+                selectedDayKey: selectedDayKey,
+                onSelect: selectDay
+            )
                 .frame(height: 116)
+
+            if
+                let selectedDayKey,
+                let selectedDay = days.first(where: {
+                    $0.dateKey == selectedDayKey
+                })
+            {
+                DayBreakTimeline(day: selectedDay)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
         .padding(20)
         .frame(
-            minWidth: StatsPanelController.contentSize.width,
-            minHeight: StatsPanelController.contentSize.height,
+            width: StatsPanelController.contentSize.width,
+            height: selectedDayKey == nil
+                ? StatsPanelController.contentSize.height
+                : StatsPanelController.expandedContentSize.height,
             alignment: .topLeading
         )
         .background(Color(nsColor: .windowBackgroundColor))
+        .animation(.easeInOut(duration: 0.18), value: selectedDayKey)
+        .onChange(of: selectedDayKey) { _, newValue in
+            onDetailExpansionChanged(newValue != nil)
+        }
+        .onChange(of: days.map(\.dateKey)) { _, dateKeys in
+            guard
+                let selectedDayKey,
+                !dateKeys.contains(selectedDayKey)
+            else {
+                return
+            }
+
+            self.selectedDayKey = nil
+        }
+    }
+
+    private func selectDay(_ dateKey: String) {
+        selectedDayKey = selectedDayKey == dateKey ? nil : dateKey
     }
 }
 
@@ -126,6 +198,8 @@ private struct LegendItem: View {
 
 private struct WeeklyBreakBarChart: View {
     let days: [BreakHistoryDay]
+    let selectedDayKey: String?
+    let onSelect: (String) -> Void
 
     private var maximumTotal: Int {
         max(1, days.map(\.total).max() ?? 0)
@@ -141,57 +215,76 @@ private struct WeeklyBreakBarChart: View {
 
             HStack(alignment: .bottom, spacing: 10) {
                 ForEach(days) { day in
-                    VStack(spacing: 5) {
-                        ZStack(alignment: .bottom) {
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.secondary.opacity(0.10))
-
-                            if day.heldSeconds > 0 {
+                    Button {
+                        onSelect(day.dateKey)
+                    } label: {
+                        VStack(spacing: 5) {
+                            ZStack(alignment: .bottom) {
                                 RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color.accentColor.opacity(0.22))
-                                    .frame(
-                                        height: heldHeight(
-                                            day.heldSeconds,
-                                            availableHeight: barAreaHeight
+                                    .fill(Color.secondary.opacity(0.10))
+
+                                if day.heldSeconds > 0 {
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(Color.accentColor.opacity(0.22))
+                                        .frame(
+                                            height: heldHeight(
+                                                day.heldSeconds,
+                                                availableHeight: barAreaHeight
+                                            )
                                         )
+                                        .padding(.horizontal, 2)
+                                }
+
+                                VStack(spacing: 1) {
+                                    if day.completed > 0 {
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .fill(Color.accentColor)
+                                            .frame(
+                                                height: segmentHeight(
+                                                    day.completed,
+                                                    availableHeight: barAreaHeight
+                                                )
+                                            )
+                                    }
+
+                                    if day.skipped > 0 {
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .fill(Color.secondary.opacity(0.55))
+                                            .frame(
+                                                height: segmentHeight(
+                                                    day.skipped,
+                                                    availableHeight: barAreaHeight
+                                                )
+                                            )
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.horizontal, 6)
+
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(
+                                        day.dateKey == selectedDayKey
+                                            ? Color.accentColor
+                                            : Color.clear,
+                                        lineWidth: 2
                                     )
-                                    .padding(.horizontal, 2)
-                            }
-
-                            VStack(spacing: 1) {
-                                if day.completed > 0 {
-                                    RoundedRectangle(cornerRadius: 3)
-                                        .fill(Color.accentColor)
-                                        .frame(
-                                            height: segmentHeight(
-                                                day.completed,
-                                                availableHeight: barAreaHeight
-                                            )
-                                        )
-                                }
-
-                                if day.skipped > 0 {
-                                    RoundedRectangle(cornerRadius: 3)
-                                        .fill(Color.secondary.opacity(0.55))
-                                        .frame(
-                                            height: segmentHeight(
-                                                day.skipped,
-                                                availableHeight: barAreaHeight
-                                            )
-                                        )
-                                }
                             }
                             .frame(maxWidth: .infinity)
-                            .padding(.horizontal, 6)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: barAreaHeight)
-                        .help(daySummary(day))
+                            .frame(height: barAreaHeight)
 
-                        Text(day.date, format: .dateTime.weekday(.narrow))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            Text(day.date, format: .dateTime.weekday(.narrow))
+                                .font(.caption2)
+                                .foregroundStyle(
+                                    day.dateKey == selectedDayKey
+                                        ? Color.accentColor
+                                        : Color.secondary
+                                )
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .help(daySummary(day))
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(
                         Text(day.date, format: .dateTime.weekday(.wide))
@@ -247,5 +340,140 @@ private struct WeeklyBreakBarChart: View {
 
         let secondUnit = totalSeconds == 1 ? "second" : "seconds"
         return "\(totalSeconds) \(secondUnit)"
+    }
+}
+
+private struct DayBreakTimeline: View {
+    let day: BreakHistoryDay
+
+    private let timelineHours = [6, 9, 12, 15, 18, 21, 24]
+    private let horizontalInset: CGFloat = 14
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(
+                    day.date,
+                    format: .dateTime
+                        .weekday(.wide)
+                        .month(.abbreviated)
+                        .day()
+                )
+                .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                Text(breakCountDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            GeometryReader { geometry in
+                let lineY: CGFloat = 16
+
+                ZStack(alignment: .topLeading) {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.28))
+                        .frame(
+                            width: max(
+                                0,
+                                geometry.size.width - (horizontalInset * 2)
+                            ),
+                            height: 1
+                        )
+                        .position(x: geometry.size.width / 2, y: lineY)
+
+                    ForEach(timelineHours, id: \.self) { hour in
+                        let x = position(
+                            forHour: Double(hour),
+                            width: geometry.size.width
+                        )
+
+                        Rectangle()
+                            .fill(Color.secondary.opacity(0.32))
+                            .frame(width: 1, height: 9)
+                            .position(x: x, y: lineY)
+
+                        Text(String(format: "%02d:00", hour))
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .position(x: x, y: 40)
+                    }
+
+                    ForEach(
+                        Array(day.entries.enumerated()),
+                        id: \.offset
+                    ) { _, entry in
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(color(for: entry.outcome))
+                            .frame(width: 3, height: 23)
+                            .position(
+                                x: position(
+                                    for: entry.time,
+                                    width: geometry.size.width
+                                ),
+                                y: lineY
+                            )
+                            .help(entryDescription(entry))
+                            .accessibilityLabel(entryDescription(entry))
+                    }
+                }
+            }
+            .frame(height: 52)
+
+            if day.entries.isEmpty {
+                Text("No timestamp details were recorded for this day.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.07))
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            Text("Break timeline from 6 AM to midnight")
+        )
+    }
+
+    private var breakCountDescription: String {
+        let count = day.total
+        return "\(count) \(count == 1 ? "break" : "breaks")"
+    }
+
+    private func position(for date: Date, width: CGFloat) -> CGFloat {
+        let components = Calendar.autoupdatingCurrent.dateComponents(
+            [.hour, .minute, .second],
+            from: date
+        )
+        let hour = Double(components.hour ?? 0)
+            + (Double(components.minute ?? 0) / 60)
+            + (Double(components.second ?? 0) / 3_600)
+
+        return position(forHour: hour, width: width)
+    }
+
+    private func position(forHour hour: Double, width: CGFloat) -> CGFloat {
+        let clampedHour = min(max(hour, 6), 24)
+        let availableWidth = max(0, width - (horizontalInset * 2))
+        let progress = CGFloat((clampedHour - 6) / 18)
+        return horizontalInset + (availableWidth * progress)
+    }
+
+    private func color(for outcome: BreakOutcome) -> Color {
+        switch outcome {
+        case .completed:
+            return .accentColor
+        case .skipped:
+            return .secondary.opacity(0.65)
+        }
+    }
+
+    private func entryDescription(_ entry: BreakHistoryEntry) -> String {
+        let outcome = entry.outcome == .completed ? "Completed" : "Skipped"
+        let time = entry.time.formatted(date: .omitted, time: .shortened)
+        return "\(outcome) at \(time)"
     }
 }
