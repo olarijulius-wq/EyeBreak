@@ -231,6 +231,13 @@ enum EntranceStyle: CaseIterable {
     case pop
     case slide
     case pixels
+    case blinds
+    case clipwipe
+    case doors
+    case iris
+    case shutter
+    case staggerwipe
+    case wipe
 
     var duration: TimeInterval {
         switch self {
@@ -248,11 +255,46 @@ enum EntranceStyle: CaseIterable {
             return 0.54
         case .pixels:
             return PixelTransition.maximumDuration
+        case .blinds:
+            return MaskTransitionTiming.blindsDuration
+        case .clipwipe:
+            return MaskTransitionTiming.clipwipeDuration
+        case .doors:
+            return MaskTransitionTiming.doorsDuration
+        case .iris:
+            return MaskTransitionTiming.irisDuration
+        case .shutter:
+            return MaskTransitionTiming.shutterDuration
+        case .staggerwipe:
+            return MaskTransitionTiming.staggerwipeDuration
+        case .wipe:
+            return MaskTransitionTiming.wipeDuration
         }
     }
 
     var restingOffsetY: CGFloat {
         8
+    }
+
+    var matchingExitStyle: ExitStyle? {
+        switch self {
+        case .blinds:
+            return .blinds
+        case .clipwipe:
+            return .clipwipe
+        case .doors:
+            return .doors
+        case .iris:
+            return .iris
+        case .shutter:
+            return .shutter
+        case .staggerwipe:
+            return .staggerwipe
+        case .wipe:
+            return .wipe
+        case .bubble, .unfurl, .swing, .pour, .pop, .slide, .pixels:
+            return nil
+        }
     }
 }
 
@@ -261,6 +303,13 @@ enum ExitStyle: CaseIterable {
     case fall
     case dissolve
     case pixels
+    case blinds
+    case clipwipe
+    case doors
+    case iris
+    case shutter
+    case staggerwipe
+    case wipe
 
     var duration: TimeInterval {
         switch self {
@@ -272,6 +321,20 @@ enum ExitStyle: CaseIterable {
             return 0.42
         case .pixels:
             return PixelTransition.maximumDuration
+        case .blinds:
+            return MaskTransitionTiming.blindsDuration
+        case .clipwipe:
+            return MaskTransitionTiming.clipwipeDuration
+        case .doors:
+            return MaskTransitionTiming.doorsDuration
+        case .iris:
+            return MaskTransitionTiming.irisDuration
+        case .shutter:
+            return MaskTransitionTiming.shutterDuration
+        case .staggerwipe:
+            return MaskTransitionTiming.staggerwipeDuration
+        case .wipe:
+            return MaskTransitionTiming.wipeDuration
         }
     }
 }
@@ -387,6 +450,40 @@ private struct AsymmetricRoundedForm: Shape {
     }
 }
 
+private struct AngledWipeMask: Shape {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let clampedProgress = min(max(progress, 0), 1)
+
+        guard clampedProgress > 0 else {
+            return Path()
+        }
+
+        let angle = CGFloat(12 * Double.pi / 180)
+        let slant = tan(angle) * rect.height
+        let overscan: CGFloat = 2
+        let sweepX = rect.minX
+            + ((rect.width + slant + overscan) * clampedProgress)
+        var path = Path()
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: sweepX, y: rect.minY))
+        path.addLine(
+            to: CGPoint(x: sweepX - slant, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+
+        return path
+    }
+}
+
 enum HUDLayout {
     // The transparent margin keeps the blurred glow visible through the
     // widest card's entrance stretch and a full 120-point downward drag.
@@ -405,6 +502,51 @@ enum HUDLayout {
     static let standardHorizontalContentPadding: CGFloat = 22
     static let standardCountdownDiameter: CGFloat = 48
     static let cardSizeVariantWidthAdjustment: CGFloat = 140
+}
+
+private enum MaskTransitionTiming {
+    static let blindsBarCount = 8
+    static let blindsStagger: TimeInterval = 0.04
+    static let blindsSpringResponse: TimeInterval = 0.4
+    static let blindsSpringDampingFraction = 0.8
+    static let blindsDuration = Spring(
+        response: blindsSpringResponse,
+        dampingRatio: blindsSpringDampingFraction
+    ).settlingDuration + TimeInterval(blindsBarCount - 1) * blindsStagger
+
+    static let clipwipeDuration: TimeInterval = 0.45
+
+    static let doorsSpringResponse: TimeInterval = 0.45
+    static let doorsSpringDampingFraction = 0.85
+    static let doorsDuration = Spring(
+        response: doorsSpringResponse,
+        dampingRatio: doorsSpringDampingFraction
+    ).settlingDuration
+
+    static let irisDuration: TimeInterval = 0.5
+
+    static let shutterSlatCount = 12
+    static let shutterStagger: TimeInterval = 0.015
+    static let shutterSpringResponse: TimeInterval = 0.35
+    static let shutterSpringDampingFraction = 0.75
+    static let shutterDuration = Spring(
+        response: shutterSpringResponse,
+        dampingRatio: shutterSpringDampingFraction
+    ).settlingDuration
+        + TimeInterval(shutterSlatCount - 1) * shutterStagger
+
+    static let staggerwipeColumnCount = 6
+    static let staggerwipeStagger: TimeInterval = 0.06
+    static let staggerwipeSpringResponse: TimeInterval = 0.5
+    static let staggerwipeSpringDampingFraction = 0.7
+    static let staggerwipeDuration = Spring(
+        response: staggerwipeSpringResponse,
+        dampingRatio: staggerwipeSpringDampingFraction
+    ).settlingDuration
+        + TimeInterval(staggerwipeColumnCount - 1)
+            * staggerwipeStagger
+
+    static let wipeDuration: TimeInterval = 0.4
 }
 
 private enum PixelTransition {
@@ -598,12 +740,26 @@ final class HUDViewState: ObservableObject {
                 switch style {
                 case .bubble, .unfurl:
                     return false
-                case .swing, .pour, .pop, .slide, .pixels:
+                case .swing, .pour, .pop, .slide, .pixels,
+                     .blinds, .clipwipe, .doors, .iris, .shutter,
+                     .staggerwipe, .wipe:
                     return true
                 }
             }
-        entranceStyle = entranceStyles.randomElement() ?? .slide
-        exitStyle = ExitStyle.allCases.randomElement() ?? .shrinkToNotch
+        let selectedEntranceStyle = entranceStyles.randomElement() ?? .slide
+        entranceStyle = selectedEntranceStyle
+
+        if let matchingExitStyle = selectedEntranceStyle.matchingExitStyle {
+            exitStyle = matchingExitStyle
+        } else {
+            let legacyExitStyles: [ExitStyle] = [
+                .shrinkToNotch,
+                .fall,
+                .dissolve,
+                .pixels
+            ]
+            exitStyle = legacyExitStyles.randomElement() ?? .shrinkToNotch
+        }
 
         if Int.random(in: 0..<15) == 0 {
             cardSizeVariant = Bool.random() ? .wide : .compact
@@ -752,11 +908,13 @@ final class HUDViewState: ObservableObject {
     }
 
     var entranceDurationMultiplier: Double {
-        if case .pixels = entranceStyle {
+        switch entranceStyle {
+        case .pixels, .blinds, .clipwipe, .doors, .iris, .shutter,
+             .staggerwipe, .wipe:
             return 1
+        case .bubble, .unfurl, .swing, .pour, .pop, .slide:
+            return isSlowMotionEntrance ? 2.5 : 1
         }
-
-        return isSlowMotionEntrance ? 2.5 : 1
     }
 
     var hasCompletedEntrance: Bool {
@@ -922,6 +1080,16 @@ private struct ExitAnimationValues {
 }
 
 struct HUDView: View {
+    private enum MaskTransitionStyle {
+        case blinds
+        case clipwipe
+        case doors
+        case iris
+        case shutter
+        case staggerwipe
+        case wipe
+    }
+
     private static let hoverMargin: CGFloat = 12
     private static let tiltEdgeInset: CGFloat = 8
     private static let hoverExitDelayNanoseconds: UInt64 = 250_000_000
@@ -942,6 +1110,7 @@ struct HUDView: View {
     @State private var pixelContentIsVisible = false
     @State private var isAssembled = false
     @State private var pixelExitStarted = false
+    @State private var maskExitStarted = false
     @State private var pixelAnimationSeed = UInt64.random(
         in: 0...UInt64.max
     )
@@ -1204,6 +1373,11 @@ struct HUDView: View {
     private var transitionCard: some View {
         if usesPixelExit {
             pixelExitCard
+        } else if let activeMaskStyle {
+            maskTransitionCard(
+                style: activeMaskStyle,
+                isExiting: state.isDismissing
+            )
         } else {
             entranceAnimatedCard
         }
@@ -1213,6 +1387,54 @@ struct HUDView: View {
         guard state.isDismissing else { return false }
         guard case .pixels = state.exitStyle else { return false }
         return true
+    }
+
+    private var activeMaskStyle: MaskTransitionStyle? {
+        maskExitStyle ?? maskEntranceStyle
+    }
+
+    private var maskExitStyle: MaskTransitionStyle? {
+        guard state.isDismissing else { return nil }
+
+        switch state.exitStyle {
+        case .blinds:
+            return .blinds
+        case .clipwipe:
+            return .clipwipe
+        case .doors:
+            return .doors
+        case .iris:
+            return .iris
+        case .shutter:
+            return .shutter
+        case .staggerwipe:
+            return .staggerwipe
+        case .wipe:
+            return .wipe
+        case .shrinkToNotch, .fall, .dissolve, .pixels:
+            return nil
+        }
+    }
+
+    private var maskEntranceStyle: MaskTransitionStyle? {
+        switch state.entranceStyle {
+        case .blinds:
+            return .blinds
+        case .clipwipe:
+            return .clipwipe
+        case .doors:
+            return .doors
+        case .iris:
+            return .iris
+        case .shutter:
+            return .shutter
+        case .staggerwipe:
+            return .staggerwipe
+        case .wipe:
+            return .wipe
+        case .bubble, .unfurl, .swing, .pour, .pop, .slide, .pixels:
+            return nil
+        }
     }
 
     @ViewBuilder
@@ -1232,7 +1454,328 @@ struct HUDView: View {
             slideEntrance
         case .pixels:
             pixelEntrance
+        case .blinds:
+            maskTransitionCard(style: .blinds, isExiting: false)
+        case .clipwipe:
+            maskTransitionCard(style: .clipwipe, isExiting: false)
+        case .doors:
+            maskTransitionCard(style: .doors, isExiting: false)
+        case .iris:
+            maskTransitionCard(style: .iris, isExiting: false)
+        case .shutter:
+            maskTransitionCard(style: .shutter, isExiting: false)
+        case .staggerwipe:
+            maskTransitionCard(style: .staggerwipe, isExiting: false)
+        case .wipe:
+            maskTransitionCard(style: .wipe, isExiting: false)
         }
+    }
+
+    private func maskTransitionCard(
+        style: MaskTransitionStyle,
+        isExiting: Bool
+    ) -> some View {
+        let isRevealed = isExiting
+            ? !maskExitStarted
+            : entranceTrigger > 0
+
+        return shapedCard
+            .mask {
+                transitionMask(
+                    style: style,
+                    isRevealed: isRevealed,
+                    isExiting: isExiting
+                )
+            }
+            .offset(y: state.entranceStyle.restingOffsetY)
+    }
+
+    @ViewBuilder
+    private func transitionMask(
+        style: MaskTransitionStyle,
+        isRevealed: Bool,
+        isExiting: Bool
+    ) -> some View {
+        switch style {
+        case .blinds:
+            blindsMask(
+                isRevealed: isRevealed,
+                isExiting: isExiting
+            )
+        case .clipwipe:
+            clipwipeMask(
+                isRevealed: isRevealed,
+                isExiting: isExiting
+            )
+        case .doors:
+            doorsMask(isRevealed: isRevealed)
+        case .iris:
+            irisMask(
+                isRevealed: isRevealed,
+                isExiting: isExiting
+            )
+        case .shutter:
+            shutterMask(
+                isRevealed: isRevealed,
+                isExiting: isExiting
+            )
+        case .staggerwipe:
+            staggerwipeMask(
+                isRevealed: isRevealed,
+                isExiting: isExiting
+            )
+        case .wipe:
+            wipeMask(isRevealed: isRevealed)
+        }
+    }
+
+    private func blindsMask(
+        isRevealed: Bool,
+        isExiting: Bool
+    ) -> some View {
+        VStack(spacing: -1) {
+            ForEach(
+                0..<MaskTransitionTiming.blindsBarCount,
+                id: \.self
+            ) { index in
+                Rectangle()
+                    .fill(.white)
+                    .frame(
+                        height: (
+                            cardHeight + CGFloat(
+                                MaskTransitionTiming.blindsBarCount - 1
+                            )
+                        ) / CGFloat(MaskTransitionTiming.blindsBarCount)
+                    )
+                    .scaleEffect(
+                        x: 1,
+                        y: isRevealed ? 1 : 0,
+                        anchor: .center
+                    )
+                    .animation(
+                        .spring(
+                            response: MaskTransitionTiming
+                                .blindsSpringResponse,
+                            dampingFraction: MaskTransitionTiming
+                                .blindsSpringDampingFraction
+                        )
+                        .delay(
+                            maskStaggerDelay(
+                                index: index,
+                                count: MaskTransitionTiming.blindsBarCount,
+                                stagger: MaskTransitionTiming.blindsStagger,
+                                isExiting: isExiting
+                            )
+                        ),
+                        value: isRevealed
+                    )
+            }
+        }
+        .frame(
+            width: state.cardSize.width,
+            height: cardHeight
+        )
+    }
+
+    private func clipwipeMask(
+        isRevealed: Bool,
+        isExiting: Bool
+    ) -> some View {
+        let animation: Animation = isExiting
+            ? .easeIn(duration: MaskTransitionTiming.clipwipeDuration)
+            : .easeOut(duration: MaskTransitionTiming.clipwipeDuration)
+
+        return AngledWipeMask(progress: isRevealed ? 1 : 0)
+            .fill(.white)
+            .frame(
+                width: state.cardSize.width,
+                height: cardHeight
+            )
+            .animation(animation, value: isRevealed)
+    }
+
+    private func doorsMask(isRevealed: Bool) -> some View {
+        HStack(spacing: -1) {
+            Rectangle()
+                .fill(.white)
+                .scaleEffect(
+                    x: isRevealed ? 1 : 0,
+                    y: 1,
+                    anchor: .trailing
+                )
+
+            Rectangle()
+                .fill(.white)
+                .scaleEffect(
+                    x: isRevealed ? 1 : 0,
+                    y: 1,
+                    anchor: .leading
+                )
+        }
+        .frame(
+            width: state.cardSize.width,
+            height: cardHeight
+        )
+        .animation(
+            .spring(
+                response: MaskTransitionTiming.doorsSpringResponse,
+                dampingFraction: MaskTransitionTiming
+                    .doorsSpringDampingFraction
+            ),
+            value: isRevealed
+        )
+    }
+
+    private func irisMask(
+        isRevealed: Bool,
+        isExiting: Bool
+    ) -> some View {
+        let diameter = sqrt(
+            (state.cardSize.width * state.cardSize.width)
+                + (cardHeight * cardHeight)
+        ) + 2
+        let animation: Animation = isExiting
+            ? .easeIn(duration: MaskTransitionTiming.irisDuration)
+            : .easeOut(duration: MaskTransitionTiming.irisDuration)
+
+        return Circle()
+            .fill(.white)
+            .frame(width: diameter, height: diameter)
+            .scaleEffect(isRevealed ? 1 : 0, anchor: .center)
+            .frame(
+                width: state.cardSize.width,
+                height: cardHeight
+            )
+            .animation(animation, value: isRevealed)
+    }
+
+    private func shutterMask(
+        isRevealed: Bool,
+        isExiting: Bool
+    ) -> some View {
+        HStack(spacing: -1) {
+            ForEach(
+                0..<MaskTransitionTiming.shutterSlatCount,
+                id: \.self
+            ) { index in
+                Rectangle()
+                    .fill(.white)
+                    .frame(
+                        width: (
+                            state.cardSize.width + CGFloat(
+                                MaskTransitionTiming.shutterSlatCount - 1
+                            )
+                        ) / CGFloat(MaskTransitionTiming.shutterSlatCount)
+                    )
+                    .scaleEffect(
+                        x: isRevealed ? 1 : 0,
+                        y: 1,
+                        anchor: .center
+                    )
+                    .animation(
+                        .spring(
+                            response: MaskTransitionTiming
+                                .shutterSpringResponse,
+                            dampingFraction: MaskTransitionTiming
+                                .shutterSpringDampingFraction
+                        )
+                        .delay(
+                            maskStaggerDelay(
+                                index: index,
+                                count: MaskTransitionTiming
+                                    .shutterSlatCount,
+                                stagger: MaskTransitionTiming
+                                    .shutterStagger,
+                                isExiting: isExiting
+                            )
+                        ),
+                        value: isRevealed
+                    )
+            }
+        }
+        .frame(
+            width: state.cardSize.width,
+            height: cardHeight
+        )
+    }
+
+    private func staggerwipeMask(
+        isRevealed: Bool,
+        isExiting: Bool
+    ) -> some View {
+        HStack(spacing: -1) {
+            ForEach(
+                0..<MaskTransitionTiming.staggerwipeColumnCount,
+                id: \.self
+            ) { index in
+                Rectangle()
+                    .fill(.white)
+                    .frame(
+                        width: (
+                            state.cardSize.width + CGFloat(
+                                MaskTransitionTiming
+                                    .staggerwipeColumnCount - 1
+                            )
+                        ) / CGFloat(
+                                MaskTransitionTiming
+                                    .staggerwipeColumnCount
+                            ),
+                        height: cardHeight
+                    )
+                    .offset(y: isRevealed ? 0 : -cardHeight)
+                    .animation(
+                        .spring(
+                            response: MaskTransitionTiming
+                                .staggerwipeSpringResponse,
+                            dampingFraction: MaskTransitionTiming
+                                .staggerwipeSpringDampingFraction
+                        )
+                        .delay(
+                            maskStaggerDelay(
+                                index: index,
+                                count: MaskTransitionTiming
+                                    .staggerwipeColumnCount,
+                                stagger: MaskTransitionTiming
+                                    .staggerwipeStagger,
+                                isExiting: isExiting
+                            )
+                        ),
+                        value: isRevealed
+                    )
+            }
+        }
+        .frame(
+            width: state.cardSize.width,
+            height: cardHeight
+        )
+    }
+
+    private func wipeMask(isRevealed: Bool) -> some View {
+        Rectangle()
+            .fill(.white)
+            .frame(
+                width: isRevealed ? state.cardSize.width : 0,
+                height: cardHeight
+            )
+            .frame(
+                width: state.cardSize.width,
+                height: cardHeight,
+                alignment: .leading
+            )
+            .animation(
+                .easeInOut(duration: MaskTransitionTiming.wipeDuration),
+                value: isRevealed
+            )
+    }
+
+    private func maskStaggerDelay(
+        index: Int,
+        count: Int,
+        stagger: TimeInterval,
+        isExiting: Bool
+    ) -> TimeInterval {
+        let staggerIndex = isExiting ? count - 1 - index : index
+        return TimeInterval(staggerIndex) * stagger
     }
 
     private var shapedCard: some View {
@@ -1930,6 +2473,15 @@ struct HUDView: View {
                 guard state.isDismissing else { return }
                 pixelExitStarted = true
             }
+
+        case .blinds, .clipwipe, .doors, .iris, .shutter,
+             .staggerwipe, .wipe:
+            maskExitStarted = false
+
+            DispatchQueue.main.async {
+                guard state.isDismissing else { return }
+                maskExitStarted = true
+            }
         }
     }
 
@@ -2099,18 +2651,24 @@ struct HUDView: View {
             return true
         }
 
+        if maskEntranceStyle != nil {
+            return true
+        }
+
         return entranceTrigger > 0
     }
 
     private func textEntranceAnimation(delay: TimeInterval) -> Animation? {
-        guard case .pixels = state.entranceStyle else {
-            return .easeOut(
-                duration: 0.24 * state.entranceDurationMultiplier
-            )
-            .delay(delay * state.entranceDurationMultiplier)
+        if case .pixels = state.entranceStyle {
+            return nil
         }
 
-        return nil
+        guard maskEntranceStyle == nil else { return nil }
+
+        return .easeOut(
+            duration: 0.24 * state.entranceDurationMultiplier
+        )
+        .delay(delay * state.entranceDurationMultiplier)
     }
 
     private var cycleIndicator: some View {
