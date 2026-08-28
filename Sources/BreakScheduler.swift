@@ -134,6 +134,25 @@ final class BreakScheduler: NSObject {
         }
     }
 
+    func reschedule() {
+        guard !isPaused else {
+            return
+        }
+
+        scheduleNextBoundary()
+    }
+
+    func setImportedSnoozeUntil(_ date: Date) {
+        guard date > Date() else {
+            snoozeUntil = nil
+            userDefaults.removeObject(forKey: Self.snoozeUntilDefaultsKey)
+            return
+        }
+
+        snoozeUntil = date
+        userDefaults.set(date, forKey: Self.snoozeUntilDefaultsKey)
+    }
+
     func snooze(for duration: TimeInterval) {
         let endDate = Date().addingTimeInterval(max(0, duration))
         snoozeUntil = endDate

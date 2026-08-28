@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum SettingsChange {
     case intervalMinutes(Int)
@@ -21,6 +22,8 @@ struct SettingsActions {
     let apply: (SettingsChange) -> Void
     let showStats: () -> Void
     let openAccessibilitySettings: () -> Void
+    let exportSettings: (URL) throws -> Void
+    let importSettings: (URL) throws -> Void
     let isLaunchAtLoginEnabled: () -> Bool
     let setLaunchAtLoginEnabled: (Bool) -> Bool
 }
@@ -322,6 +325,16 @@ private struct SettingsView: View {
                 }
             }
 
+            Section("Settings files") {
+                Button("Export settings…") {
+                    exportSettings()
+                }
+
+                Button("Import settings…") {
+                    importSettings()
+                }
+            }
+
             Section("Defaults") {
                 Button("Reset All Settings…", role: .destructive) {
                     isShowingResetConfirmation = true
@@ -344,6 +357,140 @@ private struct SettingsView: View {
                 viewModel.setLaunchAtLogin(requestedValue)
             }
         )
+    }
+
+    private func exportSettings() {
+        let panel = NSSavePanel()
+        panel.title = "Export EyeBreak Settings"
+        panel.nameFieldStringValue = SettingsTransfer.defaultFileName
+        panel.allowedContentTypes = [.json]
+        panel.allowsOtherFileTypes = false
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            try actions.exportSettings(url)
+        } catch {
+            showTransferFailure(
+                title: "Settings export failed",
+                error: error
+            )
+        }
+    }
+
+    private func importSettings() {
+        let panel = NSOpenPanel()
+        panel.title = "Import EyeBreak Settings"
+        panel.allowedContentTypes = [.json]
+        panel.allowsOtherFileTypes = false
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            try actions.importSettings(url)
+            refreshSettingsFromDefaults()
+        } catch {
+            showTransferFailure(
+                title: "Settings import failed",
+                error: error
+            )
+        }
+    }
+
+    private func refreshSettingsFromDefaults() {
+        let defaults = UserDefaults.standard
+        let storedInterval = defaults.integer(
+            forKey: BreakScheduler.breakIntervalDefaultsKey
+        )
+
+        intervalMinutes = BreakScheduler.supportedIntervalMinutes
+            .contains(storedInterval)
+            ? storedInterval
+            : BreakScheduler.defaultIntervalMinutes
+        adaptiveTimingEnabled = boolPreference(
+            forKey: BreakScheduler.adaptiveTimingDefaultsKey,
+            defaultValue: false,
+            defaults: defaults
+        )
+        requireStillnessEnabled = boolPreference(
+            forKey: AppDelegate.requireStillnessEnabledDefaultsKey,
+            defaultValue: false,
+            defaults: defaults
+        )
+        cameraAttentionEnabled = boolPreference(
+            forKey: AppDelegate.cameraAttentionEnabledDefaultsKey,
+            defaultValue: false,
+            defaults: defaults
+        )
+        selectedThemeRawValue = ThemeSelection.normalizedRawValue(
+            defaults.string(forKey: AppDelegate.selectedThemeDefaultsKey)
+        )
+        nightModeEnabled = boolPreference(
+            forKey: AppDelegate.nightModeEnabledDefaultsKey,
+            defaultValue: true,
+            defaults: defaults
+        )
+        focusExerciseEnabled = boolPreference(
+            forKey: AppDelegate.focusExerciseEnabledDefaultsKey,
+            defaultValue: true,
+            defaults: defaults
+        )
+        soundEnabled = boolPreference(
+            forKey: AppDelegate.soundEnabledDefaultsKey,
+            defaultValue: true,
+            defaults: defaults
+        )
+        silentModeEnabled = boolPreference(
+            forKey: AppDelegate.silentModeEnabledDefaultsKey,
+            defaultValue: false,
+            defaults: defaults
+        )
+        dimScreenEnabled = boolPreference(
+            forKey: AppDelegate.dimScreenEnabledDefaultsKey,
+            defaultValue: false,
+            defaults: defaults
+        )
+        calendarAwareEnabled = boolPreference(
+            forKey: AppDelegate.calendarAwareEnabledDefaultsKey,
+            defaultValue: false,
+            defaults: defaults
+        )
+        escapeShortcutEnabled = boolPreference(
+            forKey: AppDelegate.escapeShortcutEnabledDefaultsKey,
+            defaultValue: false,
+            defaults: defaults
+        )
+    }
+
+    private func boolPreference(
+        forKey key: String,
+        defaultValue: Bool,
+        defaults: UserDefaults
+    ) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? defaultValue
+    }
+
+    private func showTransferFailure(title: String, error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "OK")
+
+        if let window = NSApp.keyWindow {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
     }
 
     private func resetAllSettings() {

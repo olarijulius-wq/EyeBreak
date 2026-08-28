@@ -43,8 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let calendarAwareEnabledDefaultsKey = "calendarAwareEnabled"
     static let requireStillnessEnabledDefaultsKey = "requireStillnessEnabled"
     static let cameraAttentionEnabledDefaultsKey = "cameraAttentionEnabled"
-    private static let hasLaunchedBeforeDefaultsKey = "hasLaunchedBefore"
-    private static let hasCompletedOnboardingDefaultsKey = "hasCompletedOnboarding"
+    static let hasLaunchedBeforeDefaultsKey = "hasLaunchedBefore"
+    static let hasCompletedOnboardingDefaultsKey = "hasCompletedOnboarding"
     private static let snoozeDuration: TimeInterval = 30 * 60
 
     private static let snoozeTimeFormatter: DateFormatter = {
@@ -148,6 +148,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             },
             openAccessibilitySettings: { [weak self] in
                 self?.openAccessibilitySettings()
+            },
+            exportSettings: { url in
+                try SettingsTransfer.export(to: url)
+            },
+            importSettings: { [weak self] url in
+                let importedSettings = try SettingsTransfer.import(from: url)
+                self?.applyImportedSettings(importedSettings)
             },
             isLaunchAtLoginEnabled: {
                 SMAppService.mainApp.status == .enabled
@@ -688,6 +695,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             defaults.set(isEnabled, forKey: Self.escapeShortcutEnabledDefaultsKey)
             hudController.setEscapeShortcutEnabled(isEnabled)
         }
+    }
+
+    private func applyImportedSettings(_ settings: ImportedSettings) {
+        if let intervalMinutes = settings.breakIntervalMinutes {
+            applySettingsChange(.intervalMinutes(intervalMinutes))
+        }
+
+        if let adaptiveTimingEnabled = settings.adaptiveTimingEnabled {
+            applySettingsChange(.adaptiveTiming(adaptiveTimingEnabled))
+        }
+
+        if let snoozeUntil = settings.snoozeUntil {
+            scheduler.setImportedSnoozeUntil(snoozeUntil)
+        }
+
+        if let requireStillnessEnabled = settings.requireStillnessEnabled {
+            applySettingsChange(.requireStillness(requireStillnessEnabled))
+        }
+
+        if let cameraAttentionEnabled = settings.cameraAttentionEnabled {
+            applySettingsChange(.cameraAttention(cameraAttentionEnabled))
+        }
+
+        if let selectedTheme = settings.selectedTheme {
+            applySettingsChange(.theme(selectedTheme))
+        }
+
+        if let nightModeEnabled = settings.nightModeEnabled {
+            applySettingsChange(.nightMode(nightModeEnabled))
+        }
+
+        if let focusExerciseEnabled = settings.focusExerciseEnabled {
+            applySettingsChange(.focusExercise(focusExerciseEnabled))
+        }
+
+        if let soundEnabled = settings.soundEnabled {
+            applySettingsChange(.sound(soundEnabled))
+        }
+
+        if let silentModeEnabled = settings.silentModeEnabled {
+            applySettingsChange(.silentMode(silentModeEnabled))
+        }
+
+        if let dimScreenEnabled = settings.dimScreenEnabled {
+            applySettingsChange(.dimScreen(dimScreenEnabled))
+        }
+
+        if let calendarAwareEnabled = settings.calendarAwareEnabled {
+            applySettingsChange(.calendarAwareness(calendarAwareEnabled))
+        }
+
+        if let escapeShortcutEnabled = settings.escapeShortcutEnabled {
+            applySettingsChange(.escapeShortcut(escapeShortcutEnabled))
+        }
+
+        let defaults = UserDefaults.standard
+
+        if let hasLaunchedBefore = settings.hasLaunchedBefore {
+            defaults.set(
+                hasLaunchedBefore,
+                forKey: Self.hasLaunchedBeforeDefaultsKey
+            )
+        }
+
+        if let hasCompletedOnboarding = settings.hasCompletedOnboarding {
+            defaults.set(
+                hasCompletedOnboarding,
+                forKey: Self.hasCompletedOnboardingDefaultsKey
+            )
+        }
+
+        scheduler.reschedule()
+        refreshSnoozePresentation()
+        updateStatusItemIcon()
     }
 
     private func setLaunchAtLoginEnabled(_ isEnabled: Bool) -> Bool {
