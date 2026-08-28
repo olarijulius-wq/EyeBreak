@@ -43,8 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let calendarAwareEnabledDefaultsKey = "calendarAwareEnabled"
     static let requireStillnessEnabledDefaultsKey = "requireStillnessEnabled"
     static let cameraAttentionEnabledDefaultsKey = "cameraAttentionEnabled"
-    static let hasLaunchedBeforeDefaultsKey = "hasLaunchedBefore"
-    static let hasCompletedOnboardingDefaultsKey = "hasCompletedOnboarding"
+    private static let hasCompletedOnboardingDefaultsKey = "hasCompletedOnboarding"
     private static let snoozeDuration: TimeInterval = 30 * 60
 
     private static let snoozeTimeFormatter: DateFormatter = {
@@ -750,22 +749,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             applySettingsChange(.escapeShortcut(escapeShortcutEnabled))
         }
 
-        let defaults = UserDefaults.standard
-
-        if let hasLaunchedBefore = settings.hasLaunchedBefore {
-            defaults.set(
-                hasLaunchedBefore,
-                forKey: Self.hasLaunchedBeforeDefaultsKey
-            )
-        }
-
-        if let hasCompletedOnboarding = settings.hasCompletedOnboarding {
-            defaults.set(
-                hasCompletedOnboarding,
-                forKey: Self.hasCompletedOnboardingDefaultsKey
-            )
-        }
-
         scheduler.reschedule()
         refreshSnoozePresentation()
         updateStatusItemIcon()
@@ -790,17 +773,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func shouldShowOnboarding(using defaults: UserDefaults) -> Bool {
-        if defaults.bool(forKey: Self.hasCompletedOnboardingDefaultsKey) {
-            return false
-        }
-
-        if defaults.object(forKey: Self.hasCompletedOnboardingDefaultsKey) == nil,
-           defaults.bool(forKey: Self.hasLaunchedBeforeDefaultsKey) {
-            defaults.set(true, forKey: Self.hasCompletedOnboardingDefaultsKey)
-            return false
-        }
-
-        return true
+        !defaults.bool(forKey: Self.hasCompletedOnboardingDefaultsKey)
     }
 
     private func completeOnboarding() {

@@ -230,6 +230,7 @@ enum EntranceStyle: CaseIterable {
     case pour
     case pop
     case slide
+    case pixels
 
     var duration: TimeInterval {
         switch self {
@@ -245,6 +246,8 @@ enum EntranceStyle: CaseIterable {
             return 0.35
         case .slide:
             return 0.54
+        case .pixels:
+            return PixelTransition.maximumDuration
         }
     }
 
@@ -257,6 +260,7 @@ enum ExitStyle: CaseIterable {
     case shrinkToNotch
     case fall
     case dissolve
+    case pixels
 
     var duration: TimeInterval {
         switch self {
@@ -266,6 +270,8 @@ enum ExitStyle: CaseIterable {
             return 0.50
         case .dissolve:
             return 0.42
+        case .pixels:
+            return PixelTransition.maximumDuration
         }
     }
 }
@@ -399,6 +405,41 @@ enum HUDLayout {
     static let standardHorizontalContentPadding: CGFloat = 22
     static let standardCountdownDiameter: CGFloat = 48
     static let cardSizeVariantWidthAdjustment: CGFloat = 140
+}
+
+private enum PixelTransition {
+    static let blockSize: CGFloat = 20
+    static let minimumFallDistance: CGFloat = 120
+    static let maximumFallDistance: CGFloat = 400
+    static let columnDelay: TimeInterval = 0.02
+    static let maximumJitter: TimeInterval = 0.08
+    static let springResponse: TimeInterval = 0.5
+    static let springDampingFraction = 0.7
+    static let springSettlingDuration = Spring(
+        response: springResponse,
+        dampingRatio: springDampingFraction
+    ).settlingDuration
+    static let opacityDuration: TimeInterval = 0.15
+    static let contentDelay: TimeInterval = 0.5
+    static let contentFadeDuration: TimeInterval = 0.3
+
+    static var maximumDuration: TimeInterval {
+        duration(columnCount: columnCount(for: HUDLayout.maximumCardWidth))
+    }
+
+    static func columnCount(for width: CGFloat) -> Int {
+        max(1, Int((width / blockSize).rounded(.up)))
+    }
+
+    static func rowCount(for height: CGFloat) -> Int {
+        max(1, Int((height / blockSize).rounded(.up)))
+    }
+
+    static func duration(columnCount: Int) -> TimeInterval {
+        TimeInterval(max(0, columnCount - 1)) * columnDelay
+            + maximumJitter
+            + springSettlingDuration
+    }
 }
 
 enum FocusExercisePhase: CaseIterable, Equatable {
@@ -557,7 +598,7 @@ final class HUDViewState: ObservableObject {
                 switch style {
                 case .bubble, .unfurl:
                     return false
-                case .swing, .pour, .pop, .slide:
+                case .swing, .pour, .pop, .slide, .pixels:
                     return true
                 }
             }
@@ -711,14 +752,30 @@ final class HUDViewState: ObservableObject {
     }
 
     var entranceDurationMultiplier: Double {
-        isSlowMotionEntrance ? 2.5 : 1
+        if case .pixels = entranceStyle {
+            return 1
+        }
+
+        return isSlowMotionEntrance ? 2.5 : 1
     }
 
     var hasCompletedEntrance: Bool {
         guard let entranceStartedAt else { return false }
 
         return Date().timeIntervalSince(entranceStartedAt)
-            >= entranceStyle.duration * entranceDurationMultiplier
+            >= entranceAnimationDuration
+    }
+
+    private var entranceAnimationDuration: TimeInterval {
+        if case .pixels = entranceStyle {
+            return PixelTransition.duration(
+                columnCount: PixelTransition.columnCount(
+                    for: cardSize.width
+                )
+            )
+        }
+
+        return entranceStyle.duration * entranceDurationMultiplier
     }
 
     var progress: Double {
@@ -865,6 +922,10 @@ private struct ExitAnimationValues {
 }
 
 struct HUDView: View {
+    private static let hoverMargin: CGFloat = 12
+    private static let tiltEdgeInset: CGFloat = 8
+    private static let hoverExitDelayNanoseconds: UInt64 = 250_000_000
+
     @ObservedObject var state: HUDViewState
     let onDismiss: () -> Void
     let onHoverChanged: (Bool) -> Void
@@ -873,13 +934,24 @@ struct HUDView: View {
     @State private var glowIsPulsing = false
     @State private var fallbackBlinkScaleY: CGFloat = 1
     @State private var dragOffset: CGFloat = 0
-    @State private var maximumDragTranslation: CGFloat = 0
     @State private var tiltX = 0.0
     @State private var tiltY = 0.0
+    @State private var pendingHoverExitTask: Task<Void, Never>?
+    @State private var pixelEntranceTask: Task<Void, Never>?
+    @State private var pixelEntranceStarted = false
+    @State private var pixelContentIsVisible = false
+    @State private var isAssembled = false
+    @State private var pixelExitStarted = false
+    @State private var pixelAnimationSeed = UInt64.random(
+        in: 0...UInt64.max
+    )
     @State private var exitAnimationValues = ExitAnimationValues()
 
     var body: some View {
         animatedCard
+            .contentShape(
+                Rectangle().inset(by: -Self.hoverMargin)
+            )
             .onContinuousHover(coordinateSpace: .local) { phase in
                 updateTilt(for: phase)
             }
@@ -899,13 +971,15 @@ struct HUDView: View {
                 value: isInFinalThreeSeconds
             )
             .offset(y: dragOffset)
-            .gesture(cardDragGesture)
+            .gesture(
+                cardDragGesture.exclusively(before: cardTapGesture)
+            )
             .help(
                 state.isInformational
                     ? ""
                     : "Right-click to snooze breaks for 30 minutes"
             )
-            .onHover(perform: onHoverChanged)
+            .onHover(perform: handleHoverChanged)
             .padding(.top, state.cardTopPadding)
             .frame(
                 width: HUDLayout.panelSize.width,
@@ -918,7 +992,14 @@ struct HUDView: View {
                     state.markEntranceStarted()
                     entranceTrigger += 1
                     glowIsPulsing = true
+                    startPixelEntranceIfNeeded()
                 }
+            }
+            .onDisappear {
+                pendingHoverExitTask?.cancel()
+                pendingHoverExitTask = nil
+                pixelEntranceTask?.cancel()
+                pixelEntranceTask = nil
             }
             .onReceive(state.blinkTimer) { _ in
                 guard !state.isDismissing else { return }
@@ -934,7 +1015,7 @@ struct HUDView: View {
     }
 
     private var cardDragGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+        DragGesture(minimumDistance: 3, coordinateSpace: .global)
             .onChanged { value in
                 guard
                     !state.isDismissing,
@@ -943,32 +1024,104 @@ struct HUDView: View {
                     return
                 }
                 dragOffset = rubberBandOffset(for: value.translation.height)
-                maximumDragTranslation = max(
-                    maximumDragTranslation,
-                    hypot(value.translation.width, value.translation.height)
-                )
             }
-            .onEnded { value in
+            .onEnded { _ in
                 guard !state.isInformational else {
                     return
                 }
-
-                let totalTranslation = max(
-                    maximumDragTranslation,
-                    hypot(value.translation.width, value.translation.height)
-                )
-                maximumDragTranslation = 0
 
                 withAnimation(
                     .spring(response: 0.4, dampingFraction: 0.55)
                 ) {
                     dragOffset = 0
                 }
-
-                if totalTranslation < 4 {
-                    onDismiss()
-                }
             }
+    }
+
+    private var cardTapGesture: some Gesture {
+        TapGesture()
+            .onEnded {
+                guard
+                    !state.isDismissing,
+                    !state.isInformational
+                else {
+                    return
+                }
+
+                onDismiss()
+            }
+    }
+
+    private func handleHoverChanged(_ isHovering: Bool) {
+        pendingHoverExitTask?.cancel()
+        pendingHoverExitTask = nil
+
+        if isHovering {
+            onHoverChanged(true)
+            return
+        }
+
+        pendingHoverExitTask = Task { @MainActor in
+            try? await Task.sleep(
+                nanoseconds: Self.hoverExitDelayNanoseconds
+            )
+            guard !Task.isCancelled else { return }
+            onHoverChanged(false)
+        }
+    }
+
+    private func startPixelEntranceIfNeeded() {
+        guard case .pixels = state.entranceStyle else { return }
+
+        pixelEntranceTask?.cancel()
+        pixelEntranceStarted = false
+        pixelContentIsVisible = false
+        isAssembled = false
+        pixelExitStarted = false
+
+        let assemblyDuration = PixelTransition.duration(
+            columnCount: pixelColumnCount
+        )
+
+        pixelEntranceTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            pixelEntranceStarted = true
+
+            do {
+                try await Task.sleep(
+                    nanoseconds: nanoseconds(
+                        for: PixelTransition.contentDelay
+                    )
+                )
+            } catch {
+                return
+            }
+
+            withAnimation(
+                .easeOut(duration: PixelTransition.contentFadeDuration)
+            ) {
+                pixelContentIsVisible = true
+            }
+
+            do {
+                try await Task.sleep(
+                    nanoseconds: nanoseconds(
+                        for: assemblyDuration
+                            - PixelTransition.contentDelay
+                    )
+                )
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+            isAssembled = true
+        }
+    }
+
+    private func nanoseconds(for duration: TimeInterval) -> UInt64 {
+        UInt64(max(0, duration) * 1_000_000_000)
     }
 
     private func rubberBandOffset(for translation: CGFloat) -> CGFloat {
@@ -985,13 +1138,13 @@ struct HUDView: View {
     private func updateTilt(for phase: HoverPhase) {
         switch phase {
         case .active(let location):
-            let horizontalPosition = min(
-                max((location.x / state.cardSize.width) * 2 - 1, -1),
-                1
+            let horizontalPosition = normalizedTiltPosition(
+                location.x,
+                length: state.cardSize.width
             )
-            let verticalPosition = min(
-                max((location.y / cardHeight) * 2 - 1, -1),
-                1
+            let verticalPosition = normalizedTiltPosition(
+                location.y,
+                length: cardHeight
             )
 
             tiltX = -Double(verticalPosition) * 4
@@ -1007,8 +1160,28 @@ struct HUDView: View {
         }
     }
 
+    private func normalizedTiltPosition(
+        _ position: CGFloat,
+        length: CGFloat
+    ) -> CGFloat {
+        let edgeInset = min(Self.tiltEdgeInset, length / 2)
+        let minimumPosition = edgeInset
+        let maximumPosition = length - edgeInset
+
+        guard maximumPosition > minimumPosition else {
+            return 0
+        }
+
+        let clampedPosition = min(
+            max(position, minimumPosition),
+            maximumPosition
+        )
+        return ((clampedPosition - minimumPosition)
+            / (maximumPosition - minimumPosition)) * 2 - 1
+    }
+
     private var animatedCard: some View {
-        entranceAnimatedCard
+        transitionCard
             .scaleEffect(
                 x: exitAnimationValues.scaleX,
                 y: exitAnimationValues.scaleY,
@@ -1028,6 +1201,21 @@ struct HUDView: View {
     }
 
     @ViewBuilder
+    private var transitionCard: some View {
+        if usesPixelExit {
+            pixelExitCard
+        } else {
+            entranceAnimatedCard
+        }
+    }
+
+    private var usesPixelExit: Bool {
+        guard state.isDismissing else { return false }
+        guard case .pixels = state.exitStyle else { return false }
+        return true
+    }
+
+    @ViewBuilder
     private var entranceAnimatedCard: some View {
         switch state.entranceStyle {
         case .bubble:
@@ -1042,6 +1230,8 @@ struct HUDView: View {
             popEntrance
         case .slide:
             slideEntrance
+        case .pixels:
+            pixelEntrance
         }
     }
 
@@ -1071,6 +1261,179 @@ struct HUDView: View {
                         value: isGlowAnimating
                     )
             }
+    }
+
+    @ViewBuilder
+    private var pixelEntrance: some View {
+        if isAssembled {
+            shapedCard
+                .offset(y: state.entranceStyle.restingOffsetY)
+        } else {
+            pixelTransitionCard(isExiting: false)
+        }
+    }
+
+    private var pixelExitCard: some View {
+        pixelTransitionCard(isExiting: true)
+    }
+
+    private func pixelTransitionCard(isExiting: Bool) -> some View {
+        let silhouette: AnyShape = state.cardShape.shape
+        let contentOpacity = isExiting
+            ? (pixelExitStarted ? 0.0 : 1.0)
+            : (pixelContentIsVisible ? 1.0 : 0.0)
+        let contentAnimation: Animation = isExiting
+            ? .easeIn(duration: PixelTransition.opacityDuration)
+            : .easeOut(duration: PixelTransition.contentFadeDuration)
+
+        return ZStack {
+            pixelGrid(isExiting: isExiting)
+
+            cardForeground
+                .clipShape(silhouette)
+                .opacity(contentOpacity)
+                .animation(contentAnimation, value: contentOpacity)
+        }
+        .overlay {
+            silhouette
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .opacity(contentOpacity)
+                .animation(contentAnimation, value: contentOpacity)
+        }
+        .frame(
+            width: state.cardSize.width,
+            height: cardHeight
+        )
+        .offset(y: state.entranceStyle.restingOffsetY)
+    }
+
+    private func pixelGrid(isExiting: Bool) -> some View {
+        let blockCount = pixelColumnCount * pixelRowCount
+
+        return ZStack(alignment: .topLeading) {
+            ForEach(0..<blockCount, id: \.self) { index in
+                pixelBlock(index: index, isExiting: isExiting)
+            }
+        }
+        .frame(
+            width: state.cardSize.width,
+            height: cardHeight,
+            alignment: .topLeading
+        )
+    }
+
+    private func pixelBlock(
+        index: Int,
+        isExiting: Bool
+    ) -> some View {
+        let column = index % pixelColumnCount
+        let row = index / pixelColumnCount
+        let isAnimating = isExiting
+            ? pixelExitStarted
+            : pixelEntranceStarted
+        let distance = pixelFallDistance(for: index)
+        let delay = pixelDelay(
+            column: column,
+            index: index,
+            isExiting: isExiting
+        )
+        let offsetY: CGFloat
+        let opacity: Double
+
+        if isExiting {
+            offsetY = isAnimating ? distance : 0
+            opacity = isAnimating ? 0 : 1
+        } else {
+            offsetY = isAnimating ? 0 : -distance
+            opacity = isAnimating ? 1 : 0
+        }
+
+        let fallingBlock = driftingBackground
+            .frame(
+                width: state.cardSize.width,
+                height: cardHeight
+            )
+            .clipShape(state.cardShape.shape)
+            .mask(alignment: .topLeading) {
+                Rectangle()
+                    .frame(
+                        width: PixelTransition.blockSize,
+                        height: PixelTransition.blockSize
+                    )
+                    .offset(
+                        x: CGFloat(column) * PixelTransition.blockSize,
+                        y: CGFloat(row) * PixelTransition.blockSize
+                    )
+            }
+            .offset(y: offsetY)
+            .animation(
+                .spring(
+                    response: PixelTransition.springResponse,
+                    dampingFraction: PixelTransition.springDampingFraction
+                )
+                .delay(delay),
+                value: isAnimating
+            )
+
+        return fallingBlock
+            .opacity(opacity)
+            .animation(
+                .linear(duration: PixelTransition.opacityDuration)
+                    .delay(delay),
+                value: isAnimating
+            )
+    }
+
+    private var pixelColumnCount: Int {
+        PixelTransition.columnCount(for: state.cardSize.width)
+    }
+
+    private var pixelRowCount: Int {
+        PixelTransition.rowCount(for: cardHeight)
+    }
+
+    private func pixelDelay(
+        column: Int,
+        index: Int,
+        isExiting: Bool
+    ) -> TimeInterval {
+        let cascadeColumn = isExiting
+            ? pixelColumnCount - 1 - column
+            : column
+        let jitter = pixelRandomUnit(
+            index: index,
+            salt: 0xA24B_AED4_963E_E407
+        ) * PixelTransition.maximumJitter
+
+        return TimeInterval(cascadeColumn) * PixelTransition.columnDelay
+            + jitter
+    }
+
+    private func pixelFallDistance(for index: Int) -> CGFloat {
+        let unitValue = pixelRandomUnit(
+            index: index,
+            salt: 0x9FB2_1C65_1E98_DF25
+        )
+        return PixelTransition.minimumFallDistance
+            + CGFloat(unitValue)
+                * (
+                    PixelTransition.maximumFallDistance
+                        - PixelTransition.minimumFallDistance
+                )
+    }
+
+    private func pixelRandomUnit(
+        index: Int,
+        salt: UInt64
+    ) -> Double {
+        var value = pixelAnimationSeed
+            &+ UInt64(index) &* 0x9E37_79B9_7F4A_7C15
+            &+ salt
+        value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
+        value ^= value >> 31
+
+        return Double(value >> 11) / 9_007_199_254_740_992
     }
 
     private var bubbleEntrance: some View {
@@ -1527,6 +1890,9 @@ struct HUDView: View {
     }
 
     private func animateExit() {
+        pixelEntranceTask?.cancel()
+        pixelEntranceTask = nil
+
         switch state.exitStyle {
         case .shrinkToNotch:
             withAnimation(.easeIn(duration: state.exitStyle.duration)) {
@@ -1556,24 +1922,30 @@ struct HUDView: View {
                 exitAnimationValues.blurRadius = 20
                 exitAnimationValues.opacity = 0
             }
+
+        case .pixels:
+            pixelExitStarted = false
+
+            DispatchQueue.main.async {
+                guard state.isDismissing else { return }
+                pixelExitStarted = true
+            }
         }
     }
 
     private var card: some View {
+        cardForeground
+            .background {
+                cardBackground
+            }
+    }
+
+    private var cardForeground: some View {
         cardContent
             .frame(
                 width: state.cardSize.width,
                 height: cardHeight
             )
-            .background {
-                ZStack {
-                    driftingBackground
-
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.16)
-                }
-            }
             .overlay(alignment: .bottom) {
                 if !state.isInformational {
                     cycleIndicator
@@ -1587,6 +1959,16 @@ struct HUDView: View {
                         .padding(.bottom, 9)
                 }
             }
+    }
+
+    private var cardBackground: some View {
+        ZStack {
+            driftingBackground
+
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(0.16)
+        }
     }
 
     @ViewBuilder
@@ -1640,13 +2022,10 @@ struct HUDView: View {
                 )
             }
             .foregroundStyle(state.theme.foreground)
-            .opacity(entranceTrigger > 0 ? 1 : 0)
-            .offset(y: entranceTrigger > 0 ? 0 : 6)
+            .opacity(entranceTextIsVisible ? 1 : 0)
+            .offset(y: entranceTextIsVisible ? 0 : 6)
             .animation(
-                .easeOut(
-                    duration: 0.24 * state.entranceDurationMultiplier
-                )
-                .delay(0.25 * state.entranceDurationMultiplier),
+                textEntranceAnimation(delay: 0.25),
                 value: entranceTrigger
             )
             .animation(
@@ -1677,19 +2056,13 @@ struct HUDView: View {
                     .font(.system(size: size, weight: weight))
                     .foregroundStyle(state.theme.foreground)
                     .lineLimit(1)
-                    .opacity(entranceTrigger > 0 ? 1 : 0)
-                    .offset(y: entranceTrigger > 0 ? 0 : 6)
+                    .opacity(entranceTextIsVisible ? 1 : 0)
+                    .offset(y: entranceTextIsVisible ? 0 : 6)
                     .animation(
-                        .easeOut(
-                            duration: 0.24
-                                * state.entranceDurationMultiplier
-                        )
-                            .delay(
-                                (
-                                    0.25
-                                        + Double(startingIndex + index) * 0.06
-                                ) * state.entranceDurationMultiplier
-                            ),
+                        textEntranceAnimation(
+                            delay: 0.25
+                                + Double(startingIndex + index) * 0.06
+                        ),
                         value: entranceTrigger
                     )
             }
@@ -1709,21 +2082,35 @@ struct HUDView: View {
             .lineLimit(lineLimit)
             .minimumScaleFactor(minimumScaleFactor)
             .contentTransition(.opacity)
-            .opacity(entranceTrigger > 0 ? 1 : 0)
-            .offset(y: entranceTrigger > 0 ? 0 : 6)
+            .opacity(entranceTextIsVisible ? 1 : 0)
+            .offset(y: entranceTextIsVisible ? 0 : 6)
             .animation(
-                .easeOut(
-                    duration: 0.24 * state.entranceDurationMultiplier
-                )
-                .delay(
-                    0.25 * state.entranceDurationMultiplier
-                ),
+                textEntranceAnimation(delay: 0.25),
                 value: entranceTrigger
             )
             .animation(
                 .easeInOut(duration: 0.3),
                 value: state.displayedSubtitle
             )
+    }
+
+    private var entranceTextIsVisible: Bool {
+        if case .pixels = state.entranceStyle {
+            return true
+        }
+
+        return entranceTrigger > 0
+    }
+
+    private func textEntranceAnimation(delay: TimeInterval) -> Animation? {
+        guard case .pixels = state.entranceStyle else {
+            return .easeOut(
+                duration: 0.24 * state.entranceDurationMultiplier
+            )
+            .delay(delay * state.entranceDurationMultiplier)
+        }
+
+        return nil
     }
 
     private var cycleIndicator: some View {

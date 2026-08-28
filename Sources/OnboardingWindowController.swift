@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-final class OnboardingWindowController: NSWindowController {
+final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     static let contentSize = NSSize(width: 560, height: 420)
 
     private let onGetStarted: () -> Void
@@ -12,7 +12,7 @@ final class OnboardingWindowController: NSWindowController {
 
         let onboardingWindow = NSWindow(
             contentRect: NSRect(origin: .zero, size: Self.contentSize),
-            styleMask: [.titled],
+            styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
@@ -26,6 +26,7 @@ final class OnboardingWindowController: NSWindowController {
 
         super.init(window: onboardingWindow)
         shouldCascadeWindows = false
+        onboardingWindow.delegate = self
         onboardingWindow.contentViewController = NSHostingController(
             rootView: OnboardingView { [weak self] in
                 self?.completeOnboarding()
@@ -53,12 +54,20 @@ final class OnboardingWindowController: NSWindowController {
     }
 
     private func completeOnboarding() {
+        finishOnboarding()
+        close()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        finishOnboarding()
+    }
+
+    private func finishOnboarding() {
         guard !didComplete else {
             return
         }
 
         didComplete = true
-        close()
         onGetStarted()
     }
 }

@@ -1,4 +1,5 @@
 import AVFoundation
+import OSLog
 import Vision
 
 final class CameraAttentionDetector: NSObject,
@@ -7,6 +8,10 @@ final class CameraAttentionDetector: NSObject,
     private static let sampleInterval: TimeInterval = 0.25
     private static let staleResultInterval: TimeInterval = 0.75
     private static let facingThreshold = 0.25
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.eyebreak",
+        category: "CameraAttention"
+    )
 
     static func requestPermissionIfNeeded(
         completion: @escaping (Bool) -> Void
@@ -221,7 +226,8 @@ final class CameraAttentionDetector: NSObject,
             return
         }
 
-        let request = VNDetectFaceLandmarksRequest()
+        let request = VNDetectFaceRectanglesRequest()
+        request.revision = VNDetectFaceRectanglesRequestRevision3
         let requestHandler = VNImageRequestHandler(
             cvPixelBuffer: pixelBuffer,
             options: [:]
@@ -229,21 +235,63 @@ final class CameraAttentionDetector: NSObject,
 
         do {
             try requestHandler.perform([request])
-            let isFacingScreen = (request.results ?? []).contains { face in
-                guard
-                    let yaw = face.yaw?.doubleValue,
-                    let pitch = face.pitch?.doubleValue
-                else {
-                    return false
-                }
-
-                return abs(yaw) < Self.facingThreshold
-                    && abs(pitch) < Self.facingThreshold
+            let faces = request.results ?? []
+            let faceDecisions = faces.map { face in
+                Self.isFacingScreen(
+                    yaw: face.yaw?.doubleValue,
+                    pitch: face.pitch?.doubleValue
+                )
             }
+            let isFacingScreen = faceDecisions.contains(true)
+
+            Self.logDecision(
+                faces: faces,
+                faceDecisions: faceDecisions,
+                isFacingScreen: isFacingScreen
+            )
             reportFacingScreen(isFacingScreen)
         } catch {
+            Self.logger.error(
+                "Face detection failed: \(error.localizedDescription, privacy: .public)"
+            )
             reportFacingScreen(false)
         }
+    }
+
+    private static func isFacingScreen(
+        yaw: Double?,
+        pitch: Double?
+    ) -> Bool {
+        guard let yaw, let pitch else {
+            return false
+        }
+
+        return abs(yaw) < facingThreshold
+            && abs(pitch) < facingThreshold
+    }
+
+    private static func logDecision(
+        faces: [VNFaceObservation],
+        faceDecisions: [Bool],
+        isFacingScreen: Bool
+    ) {
+        let angleSummary = faces.enumerated().map { index, face in
+            let yaw = face.yaw.map {
+                String(format: "%.3f", $0.doubleValue)
+            } ?? "nil"
+            let pitch = face.pitch.map {
+                String(format: "%.3f", $0.doubleValue)
+            } ?? "nil"
+            let decision = faceDecisions[index]
+            return "face[\(index)] yaw=\(yaw) pitch=\(pitch) facing=\(decision)"
+        }.joined(separator: "; ")
+        let details = angleSummary.isEmpty
+            ? "yaw=nil pitch=nil"
+            : angleSummary
+
+        logger.info(
+            "faceCount=\(faces.count, privacy: .public) \(details, privacy: .public) decision=\(isFacingScreen, privacy: .public)"
+        )
     }
 
     private func reportFacingScreen(_ isFacingScreen: Bool) {

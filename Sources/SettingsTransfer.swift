@@ -14,8 +14,6 @@ struct ImportedSettings {
     let dimScreenEnabled: Bool?
     let calendarAwareEnabled: Bool?
     let escapeShortcutEnabled: Bool?
-    let hasLaunchedBefore: Bool?
-    let hasCompletedOnboarding: Bool?
 }
 
 enum SettingsTransfer {
@@ -92,13 +90,7 @@ enum SettingsTransfer {
                 forKey: AppDelegate.escapeShortcutEnabledDefaultsKey,
                 defaultValue: false,
                 defaults: defaults
-            ),
-            hasLaunchedBefore: defaults.object(
-                forKey: AppDelegate.hasLaunchedBeforeDefaultsKey
-            ) as? Bool,
-            hasCompletedOnboarding: defaults.object(
-                forKey: AppDelegate.hasCompletedOnboardingDefaultsKey
-            ) as? Bool
+            )
         )
         let archive = SettingsArchive(
             schemaVersion: currentSchemaVersion,
@@ -192,9 +184,7 @@ enum SettingsTransfer {
             silentModeEnabled: archive.settings.silentModeEnabled,
             dimScreenEnabled: archive.settings.dimScreenEnabled,
             calendarAwareEnabled: archive.settings.calendarAwareEnabled,
-            escapeShortcutEnabled: archive.settings.escapeShortcutEnabled,
-            hasLaunchedBefore: archive.settings.hasLaunchedBefore,
-            hasCompletedOnboarding: archive.settings.hasCompletedOnboarding
+            escapeShortcutEnabled: archive.settings.escapeShortcutEnabled
         )
     }
 
@@ -255,8 +245,6 @@ private struct SettingsPayload: Codable {
     let dimScreenEnabled: Bool?
     let calendarAwareEnabled: Bool?
     let escapeShortcutEnabled: Bool?
-    let hasLaunchedBefore: Bool?
-    let hasCompletedOnboarding: Bool?
 }
 
 private enum SettingsTransferError: LocalizedError {
