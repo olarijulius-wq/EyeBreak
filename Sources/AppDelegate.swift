@@ -1,7 +1,7 @@
 import AppKit
 import ServiceManagement
 
-private enum ThemeSelection {
+enum ThemeSelection {
     static let autoRawValue = "auto"
 
     static func normalizedRawValue(_ storedValue: String?) -> String {
@@ -31,20 +31,20 @@ private enum ThemeSelection {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private static let selectedThemeDefaultsKey = "selectedTheme"
-    private static let soundEnabledDefaultsKey = "soundEnabled"
-    private static let focusExerciseEnabledDefaultsKey = "focusExerciseEnabled"
-    private static let escapeShortcutEnabledDefaultsKey = "escapeShortcutEnabled"
-    private static let silentModeEnabledDefaultsKey = "silentModeEnabled"
+    static let selectedThemeDefaultsKey = "selectedTheme"
+    static let soundEnabledDefaultsKey = "soundEnabled"
+    static let focusExerciseEnabledDefaultsKey = "focusExerciseEnabled"
+    static let escapeShortcutEnabledDefaultsKey = "escapeShortcutEnabled"
+    static let silentModeEnabledDefaultsKey = "silentModeEnabled"
     private static let obsoleteSilentModeDefaultsKey = "miniModeEnabled"
     private static let removedExerciseDefaultsKey = "eyeExerciseEnabled"
-    private static let nightModeEnabledDefaultsKey = "nightModeEnabled"
-    private static let dimScreenEnabledDefaultsKey = "dimScreenEnabled"
-    private static let calendarAwareEnabledDefaultsKey = "calendarAwareEnabled"
-    private static let requireStillnessEnabledDefaultsKey = "requireStillnessEnabled"
-    private static let cameraAttentionEnabledDefaultsKey = "cameraAttentionEnabled"
+    static let nightModeEnabledDefaultsKey = "nightModeEnabled"
+    static let dimScreenEnabledDefaultsKey = "dimScreenEnabled"
+    static let calendarAwareEnabledDefaultsKey = "calendarAwareEnabled"
+    static let requireStillnessEnabledDefaultsKey = "requireStillnessEnabled"
+    static let cameraAttentionEnabledDefaultsKey = "cameraAttentionEnabled"
     private static let hasLaunchedBeforeDefaultsKey = "hasLaunchedBefore"
-    private static let firstRunNoticeDuration: TimeInterval = 6
+    private static let hasCompletedOnboardingDefaultsKey = "hasCompletedOnboarding"
     private static let snoozeDuration: TimeInterval = 30 * 60
 
     private static let snoozeTimeFormatter: DateFormatter = {
@@ -138,6 +138,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var statsPanelController = StatsPanelController(
         historyStore: breakHistoryStore
     )
+    private lazy var settingsWindowController = SettingsWindowController(
+        actions: SettingsActions(
+            apply: { [weak self] change in
+                self?.applySettingsChange(change)
+            },
+            showStats: { [weak self] in
+                self?.statsPanelController.show()
+            },
+            openAccessibilitySettings: { [weak self] in
+                self?.openAccessibilitySettings()
+            },
+            isLaunchAtLoginEnabled: {
+                SMAppService.mainApp.status == .enabled
+            },
+            setLaunchAtLoginEnabled: { [weak self] isEnabled in
+                self?.setLaunchAtLoginEnabled(isEnabled) ?? false
+            }
+        )
+    )
+    private lazy var onboardingWindowController = OnboardingWindowController(
+        onGetStarted: { [weak self] in
+            self?.completeOnboarding()
+        }
+    )
     private var statusItem: NSStatusItem?
     private var statusIconTimer: Timer?
     private var statusIconPulseGeneration = 0
@@ -145,20 +169,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var silentModeStatusPulseGeneration = 0
     private var isSilentModeBreakActive = false
     private var pauseMenuItem: NSMenuItem?
-    private var adaptiveTimingMenuItem: NSMenuItem?
-    private var requireStillnessMenuItem: NSMenuItem?
-    private var cameraAttentionMenuItem: NSMenuItem?
-    private var soundMenuItem: NSMenuItem?
-    private var focusExerciseMenuItem: NSMenuItem?
-    private var silentModeMenuItem: NSMenuItem?
-    private var nightModeMenuItem: NSMenuItem?
-    private var dimScreenMenuItem: NSMenuItem?
-    private var calendarAwareMenuItem: NSMenuItem?
-    private var escapeShortcutMenuItem: NSMenuItem?
-    private var escapeShortcutEnabledMenuItem: NSMenuItem?
-    private var launchAtLoginMenuItem: NSMenuItem?
-    private var intervalMenuItems: [NSMenuItem] = []
-    private var themeMenuItems: [NSMenuItem] = []
 
     private lazy var scheduler = BreakScheduler(
         onPreWarning: { [weak self] in
@@ -185,9 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         let defaults = UserDefaults.standard
-        let isFirstLaunch = defaults.object(
-            forKey: Self.hasLaunchedBeforeDefaultsKey
-        ) == nil
+        let shouldShowOnboarding = shouldShowOnboarding(using: defaults)
 
         defaults.removeObject(
             forKey: Self.removedExerciseDefaultsKey
@@ -209,27 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         breakHistoryStore.pruneOlderThan30Days()
         configureStatusItem()
 
-        if isFirstLaunch {
-            defaults.set(
-                true,
-                forKey: Self.hasLaunchedBeforeDefaultsKey
-            )
-            hudController.showFirstRunNotice(
-                title: "EyeBreak is running",
-                subtitle: "Look for the eye in your menu bar",
-                duration: Self.firstRunNoticeDuration
-            ) { [weak self] in
-                guard
-                    let self,
-                    !self.scheduler.isPaused,
-                    self.scheduler.nextFireDate == nil
-                else {
-                    return
-                }
-
-                self.scheduler.start()
-                self.updateStatusItemIcon()
-            }
+        if shouldShowOnboarding {
+            onboardingWindowController.show()
         } else {
             scheduler.start()
         }
@@ -288,212 +277,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let settingsItem = NSMenuItem(
-            title: "Settings",
-            action: nil,
-            keyEquivalent: ""
-        )
-        let settingsMenu = NSMenu(title: "Settings")
-        settingsItem.submenu = settingsMenu
-        menu.addItem(settingsItem)
-
-        let intervalItem = NSMenuItem(
-            title: "Interval",
-            action: nil,
-            keyEquivalent: ""
-        )
-        let intervalMenu = NSMenu(title: "Interval")
-
-        for minutes in BreakScheduler.supportedIntervalMinutes {
-            let item = NSMenuItem(
-                title: "\(minutes) minutes",
-                action: #selector(selectInterval(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = minutes
-            item.state = minutes == scheduler.intervalMinutes ? .on : .off
-            intervalMenu.addItem(item)
-            intervalMenuItems.append(item)
-        }
-
-        intervalItem.submenu = intervalMenu
-        settingsMenu.addItem(intervalItem)
-
-        let adaptiveItem = NSMenuItem(
-            title: "Adaptive timing",
-            action: #selector(toggleAdaptiveTiming),
-            keyEquivalent: ""
-        )
-        adaptiveItem.target = self
-        adaptiveItem.state = scheduler.adaptiveTimingEnabled ? .on : .off
-        adaptiveTimingMenuItem = adaptiveItem
-
-        let requireStillnessItem = NSMenuItem(
-            title: "Require stillness",
-            action: #selector(toggleRequireStillness),
-            keyEquivalent: ""
-        )
-        requireStillnessItem.target = self
-        requireStillnessItem.state = requireStillnessEnabled ? .on : .off
-        requireStillnessMenuItem = requireStillnessItem
-
-        let themeItem = NSMenuItem(
-            title: "Theme",
-            action: nil,
-            keyEquivalent: ""
-        )
-        let themeMenu = NSMenu(title: "Theme")
-
-        let autoThemeItem = NSMenuItem(
-            title: "Auto",
-            action: #selector(selectTheme(_:)),
-            keyEquivalent: ""
-        )
-        autoThemeItem.target = self
-        autoThemeItem.representedObject = ThemeSelection.autoRawValue
-        autoThemeItem.state = selectedThemeRawValue == ThemeSelection.autoRawValue
-            ? .on
-            : .off
-        themeMenu.addItem(autoThemeItem)
-        themeMenuItems.append(autoThemeItem)
-
-        for theme in Theme.allCases {
-            let item = NSMenuItem(
-                title: theme.displayName,
-                action: #selector(selectTheme(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = theme.rawValue
-            item.state = theme.rawValue == selectedThemeRawValue ? .on : .off
-            themeMenu.addItem(item)
-            themeMenuItems.append(item)
-        }
-
-        themeItem.submenu = themeMenu
-        settingsMenu.addItem(themeItem)
-
-        settingsMenu.addItem(.separator())
-
-        let soundItem = NSMenuItem(
-            title: "Sound",
-            action: #selector(toggleSound),
-            keyEquivalent: ""
-        )
-        soundItem.target = self
-        soundItem.state = soundEnabled ? .on : .off
-        settingsMenu.addItem(soundItem)
-        soundMenuItem = soundItem
-
-        let silentModeItem = NSMenuItem(
-            title: "Silent mode",
-            action: #selector(toggleSilentMode),
-            keyEquivalent: ""
-        )
-        silentModeItem.target = self
-        silentModeItem.state = silentModeEnabled ? .on : .off
-        settingsMenu.addItem(silentModeItem)
-        silentModeMenuItem = silentModeItem
-
-        let nightModeItem = NSMenuItem(
-            title: "Night mode",
-            action: #selector(toggleNightMode),
-            keyEquivalent: ""
-        )
-        nightModeItem.target = self
-        nightModeItem.state = nightModeEnabled ? .on : .off
-        settingsMenu.addItem(nightModeItem)
-        nightModeMenuItem = nightModeItem
-
-        let focusExerciseItem = NSMenuItem(
-            title: "Focus exercise",
-            action: #selector(toggleFocusExercise),
-            keyEquivalent: ""
-        )
-        focusExerciseItem.target = self
-        focusExerciseItem.state = focusExerciseEnabled ? .on : .off
-        settingsMenu.addItem(focusExerciseItem)
-        focusExerciseMenuItem = focusExerciseItem
-
-        let cameraAttentionItem = NSMenuItem(
-            title: "Camera attention",
-            action: #selector(toggleCameraAttention),
-            keyEquivalent: ""
-        )
-        cameraAttentionItem.target = self
-        cameraAttentionItem.state = cameraAttentionEnabled ? .on : .off
-        settingsMenu.addItem(cameraAttentionItem)
-        cameraAttentionMenuItem = cameraAttentionItem
-
-        let dimScreenItem = NSMenuItem(
-            title: "Dim screen",
-            action: #selector(toggleDimScreen),
-            keyEquivalent: ""
-        )
-        dimScreenItem.target = self
-        dimScreenItem.state = dimScreenEnabled ? .on : .off
-        settingsMenu.addItem(dimScreenItem)
-        dimScreenMenuItem = dimScreenItem
-
-        let calendarAwareItem = NSMenuItem(
-            title: "Skip during meetings",
-            action: #selector(toggleCalendarAwareness),
-            keyEquivalent: ""
-        )
-        calendarAwareItem.target = self
-        calendarAwareItem.state = calendarAwareEnabled ? .on : .off
-        settingsMenu.addItem(calendarAwareItem)
-        calendarAwareMenuItem = calendarAwareItem
-
-        settingsMenu.addItem(.separator())
-        settingsMenu.addItem(adaptiveItem)
-        settingsMenu.addItem(requireStillnessItem)
-
-        let launchItem = NSMenuItem(
-            title: "Launch at login",
-            action: #selector(toggleLaunchAtLogin),
-            keyEquivalent: ""
-        )
-        launchItem.target = self
-        launchItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        launchAtLoginMenuItem = launchItem
-
-        let escapeShortcutItem = NSMenuItem(
-            title: "Escape shortcut",
-            action: nil,
-            keyEquivalent: ""
-        )
-        escapeShortcutItem.state = escapeShortcutEnabled ? .on : .off
-
-        let escapeShortcutMenu = NSMenu(title: "Escape shortcut")
-        let escapeShortcutEnabledItem = NSMenuItem(
-            title: "Enabled",
-            action: #selector(toggleEscapeShortcut),
-            keyEquivalent: ""
-        )
-        escapeShortcutEnabledItem.target = self
-        escapeShortcutEnabledItem.state = escapeShortcutEnabled ? .on : .off
-        escapeShortcutMenu.addItem(escapeShortcutEnabledItem)
-
-        let enableEscapeItem = NSMenuItem(
-            title: "Enable Escape shortcut…",
-            action: #selector(openAccessibilitySettings),
-            keyEquivalent: ""
-        )
-        enableEscapeItem.target = self
-        escapeShortcutMenu.addItem(enableEscapeItem)
-
-        escapeShortcutItem.submenu = escapeShortcutMenu
-        settingsMenu.addItem(escapeShortcutItem)
-        escapeShortcutMenuItem = escapeShortcutItem
-        escapeShortcutEnabledMenuItem = escapeShortcutEnabledItem
-
-        settingsMenu.addItem(.separator())
-        settingsMenu.addItem(launchItem)
-
-        menu.addItem(.separator())
-
         let statsItem = NSMenuItem(
             title: "Stats",
             action: #selector(showStats),
@@ -501,6 +284,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         statsItem.target = self
         menu.addItem(statsItem)
+
+        let settingsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(showSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.keyEquivalentModifierMask = [.command]
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        menu.addItem(.separator())
 
         let quitItem = NSMenuItem(
             title: "Quit",
@@ -515,9 +309,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        launchAtLoginMenuItem?.state = SMAppService.mainApp.status == .enabled
-            ? .on
-            : .off
         refreshSnoozePresentation()
     }
 
@@ -547,52 +338,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshSnoozePresentation()
     }
 
-    @objc private func toggleAdaptiveTiming() {
-        scheduler.setAdaptiveTimingEnabled(!scheduler.adaptiveTimingEnabled)
-        adaptiveTimingMenuItem?.state = scheduler.adaptiveTimingEnabled ? .on : .off
-        updateStatusItemIcon()
-    }
-
     @objc private func showStats() {
         statsPanelController.show()
     }
 
-    @objc private func selectInterval(_ sender: NSMenuItem) {
-        guard let minutes = sender.representedObject as? Int else {
-            return
-        }
-
-        scheduler.setIntervalMinutes(minutes)
-        updateStatusItemIcon()
-
-        for item in intervalMenuItems {
-            item.state = item.representedObject as? Int == minutes ? .on : .off
-        }
-    }
-
-    @objc private func selectTheme(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String else {
-            return
-        }
-
-        guard rawValue == ThemeSelection.autoRawValue
-            || Theme(rawValue: rawValue) != nil
-        else {
-            return
-        }
-
-        selectedThemeRawValue = rawValue
-        UserDefaults.standard.set(
-            rawValue,
-            forKey: Self.selectedThemeDefaultsKey
-        )
-        hudController.setTheme(
-            ThemeSelection.resolve(rawValue: selectedThemeRawValue)
-        )
-
-        for item in themeMenuItems {
-            item.state = item.representedObject as? String == rawValue ? .on : .off
-        }
+    @objc private func showSettings() {
+        settingsWindowController.show()
     }
 
     private func showHUD() {
@@ -846,140 +597,159 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.image = image
     }
 
-    @objc private func toggleSound() {
-        soundEnabled.toggle()
-        UserDefaults.standard.set(
-            soundEnabled,
-            forKey: Self.soundEnabledDefaultsKey
-        )
-        hudController.setSoundEnabled(soundEnabled)
-        soundMenuItem?.state = soundEnabled ? .on : .off
-    }
+    private func applySettingsChange(_ change: SettingsChange) {
+        let defaults = UserDefaults.standard
 
-    @objc private func toggleFocusExercise() {
-        focusExerciseEnabled.toggle()
-        UserDefaults.standard.set(
-            focusExerciseEnabled,
-            forKey: Self.focusExerciseEnabledDefaultsKey
-        )
-        hudController.setFocusExerciseEnabled(focusExerciseEnabled)
-        focusExerciseMenuItem?.state = focusExerciseEnabled ? .on : .off
-    }
+        switch change {
+        case .intervalMinutes(let minutes):
+            scheduler.setIntervalMinutes(minutes)
+            updateStatusItemIcon()
 
-    @objc private func toggleRequireStillness() {
-        requireStillnessEnabled.toggle()
-        UserDefaults.standard.set(
-            requireStillnessEnabled,
-            forKey: Self.requireStillnessEnabledDefaultsKey
-        )
-        hudController.setRequireStillnessEnabled(requireStillnessEnabled)
-        requireStillnessMenuItem?.state = requireStillnessEnabled ? .on : .off
-    }
+        case .adaptiveTiming(let isEnabled):
+            scheduler.setAdaptiveTimingEnabled(isEnabled)
+            updateStatusItemIcon()
 
-    @objc private func toggleCameraAttention() {
-        cameraAttentionEnabled.toggle()
-        UserDefaults.standard.set(
-            cameraAttentionEnabled,
-            forKey: Self.cameraAttentionEnabledDefaultsKey
-        )
-        hudController.setCameraAttentionEnabled(cameraAttentionEnabled)
-        cameraAttentionMenuItem?.state = cameraAttentionEnabled ? .on : .off
+        case .requireStillness(let isEnabled):
+            requireStillnessEnabled = isEnabled
+            defaults.set(isEnabled, forKey: Self.requireStillnessEnabledDefaultsKey)
+            hudController.setRequireStillnessEnabled(isEnabled)
 
-        guard cameraAttentionEnabled else {
-            return
-        }
+        case .cameraAttention(let isEnabled):
+            cameraAttentionEnabled = isEnabled
+            defaults.set(isEnabled, forKey: Self.cameraAttentionEnabledDefaultsKey)
+            hudController.setCameraAttentionEnabled(isEnabled)
 
-        CameraAttentionDetector.requestPermissionIfNeeded { [weak self] granted in
-            guard
-                granted,
-                let self,
-                self.cameraAttentionEnabled
+            guard isEnabled else {
+                return
+            }
+
+            CameraAttentionDetector.requestPermissionIfNeeded { [weak self] granted in
+                guard
+                    granted,
+                    let self,
+                    self.cameraAttentionEnabled
+                else {
+                    return
+                }
+
+                self.hudController.setCameraAttentionEnabled(true)
+            }
+
+        case .theme(let rawValue):
+            guard rawValue == ThemeSelection.autoRawValue
+                || Theme(rawValue: rawValue) != nil
             else {
                 return
             }
 
-            self.hudController.setCameraAttentionEnabled(true)
+            selectedThemeRawValue = rawValue
+            defaults.set(rawValue, forKey: Self.selectedThemeDefaultsKey)
+            hudController.setTheme(
+                ThemeSelection.resolve(rawValue: rawValue)
+            )
+
+        case .nightMode(let isEnabled):
+            nightModeEnabled = isEnabled
+            defaults.set(isEnabled, forKey: Self.nightModeEnabledDefaultsKey)
+
+        case .focusExercise(let isEnabled):
+            focusExerciseEnabled = isEnabled
+            defaults.set(isEnabled, forKey: Self.focusExerciseEnabledDefaultsKey)
+            hudController.setFocusExerciseEnabled(isEnabled)
+
+        case .sound(let isEnabled):
+            soundEnabled = isEnabled
+            defaults.set(isEnabled, forKey: Self.soundEnabledDefaultsKey)
+            hudController.setSoundEnabled(isEnabled)
+
+        case .silentMode(let isEnabled):
+            silentModeEnabled = isEnabled
+            defaults.set(isEnabled, forKey: Self.silentModeEnabledDefaultsKey)
+
+            if !isEnabled {
+                _ = hudController.dismissActiveSilentBreakAsSkipped()
+            }
+
+        case .dimScreen(let isEnabled):
+            dimScreenEnabled = isEnabled
+            defaults.set(isEnabled, forKey: Self.dimScreenEnabledDefaultsKey)
+            hudController.setDimScreenEnabled(isEnabled)
+
+        case .calendarAwareness(let isEnabled):
+            calendarAwareEnabled = isEnabled
+            defaults.set(isEnabled, forKey: Self.calendarAwareEnabledDefaultsKey)
+
+            if isEnabled {
+                calendarAwareness.requestFullAccess()
+            }
+
+        case .escapeShortcut(let isEnabled):
+            escapeShortcutEnabled = isEnabled
+            defaults.set(isEnabled, forKey: Self.escapeShortcutEnabledDefaultsKey)
+            hudController.setEscapeShortcutEnabled(isEnabled)
         }
     }
 
-    @objc private func toggleSilentMode() {
-        silentModeEnabled.toggle()
-        UserDefaults.standard.set(
-            silentModeEnabled,
-            forKey: Self.silentModeEnabledDefaultsKey
-        )
-
-        if !silentModeEnabled {
-            _ = hudController.dismissActiveSilentBreakAsSkipped()
-        }
-
-        silentModeMenuItem?.state = silentModeEnabled ? .on : .off
-    }
-
-    @objc private func toggleNightMode() {
-        nightModeEnabled.toggle()
-        UserDefaults.standard.set(
-            nightModeEnabled,
-            forKey: Self.nightModeEnabledDefaultsKey
-        )
-        nightModeMenuItem?.state = nightModeEnabled ? .on : .off
-    }
-
-    @objc private func toggleDimScreen() {
-        dimScreenEnabled.toggle()
-        UserDefaults.standard.set(
-            dimScreenEnabled,
-            forKey: Self.dimScreenEnabledDefaultsKey
-        )
-        hudController.setDimScreenEnabled(dimScreenEnabled)
-        dimScreenMenuItem?.state = dimScreenEnabled ? .on : .off
-    }
-
-    @objc private func toggleCalendarAwareness() {
-        calendarAwareEnabled.toggle()
-        UserDefaults.standard.set(
-            calendarAwareEnabled,
-            forKey: Self.calendarAwareEnabledDefaultsKey
-        )
-        calendarAwareMenuItem?.state = calendarAwareEnabled ? .on : .off
-
-        if calendarAwareEnabled {
-            calendarAwareness.requestFullAccess()
-        }
-    }
-
-    @objc private func toggleEscapeShortcut() {
-        escapeShortcutEnabled.toggle()
-        UserDefaults.standard.set(
-            escapeShortcutEnabled,
-            forKey: Self.escapeShortcutEnabledDefaultsKey
-        )
-        hudController.setEscapeShortcutEnabled(escapeShortcutEnabled)
-
-        let state: NSControl.StateValue = escapeShortcutEnabled ? .on : .off
-        escapeShortcutMenuItem?.state = state
-        escapeShortcutEnabledMenuItem?.state = state
-    }
-
-    @objc private func toggleLaunchAtLogin() {
+    private func setLaunchAtLoginEnabled(_ isEnabled: Bool) -> Bool {
         let service = SMAppService.mainApp
 
         // This only works for a properly bundled, code-signed app launched
         // from a stable path.
         do {
-            if service.status == .enabled {
-                try service.unregister()
-            } else {
+            if isEnabled, service.status != .enabled {
                 try service.register()
+            } else if !isEnabled, service.status != .notRegistered {
+                try service.unregister()
+            }
+        } catch {
+            return service.status == .enabled
+        }
+
+        return service.status == .enabled
+    }
+
+    private func shouldShowOnboarding(using defaults: UserDefaults) -> Bool {
+        if defaults.bool(forKey: Self.hasCompletedOnboardingDefaultsKey) {
+            return false
+        }
+
+        if defaults.object(forKey: Self.hasCompletedOnboardingDefaultsKey) == nil,
+           defaults.bool(forKey: Self.hasLaunchedBeforeDefaultsKey) {
+            defaults.set(true, forKey: Self.hasCompletedOnboardingDefaultsKey)
+            return false
+        }
+
+        return true
+    }
+
+    private func completeOnboarding() {
+        UserDefaults.standard.set(
+            true,
+            forKey: Self.hasCompletedOnboardingDefaultsKey
+        )
+        startSchedulerIfNeeded()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let button = self?.statusItem?.button else {
+                return
             }
 
-            launchAtLoginMenuItem?.state = service.status == .enabled ? .on : .off
-        } catch {
-            return
+            NSApp.activate(ignoringOtherApps: true)
+            button.performClick(nil)
         }
     }
 
-    @objc private func openAccessibilitySettings() {
+    private func startSchedulerIfNeeded() {
+        guard !scheduler.isPaused, scheduler.nextFireDate == nil else {
+            updateStatusItemIcon()
+            return
+        }
+
+        scheduler.start()
+        updateStatusItemIcon()
+    }
+
+    private func openAccessibilitySettings() {
         guard let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         ) else {
