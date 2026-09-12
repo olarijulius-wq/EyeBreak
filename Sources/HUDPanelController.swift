@@ -36,8 +36,6 @@ struct BreakTiming: Equatable {
 }
 
 final class HUDPanelController: NSObject {
-    static let breakCountDefaultsKey = "breakCount"
-
     private let panelSize = HUDLayout.panelSize
     private let countdownInterval: TimeInterval = 1.0 / 30.0
     private let recentInputThreshold: TimeInterval = 2.0
@@ -310,19 +308,10 @@ final class HUDPanelController: NSObject {
         let frontmostApplicationBundleIdentifier = NSWorkspace.shared
             .frontmostApplication?
             .bundleIdentifier
-        let completedBreakCount = max(
-            0,
-            userDefaults.integer(forKey: Self.breakCountDefaultsKey)
-        )
-        let isLongBreak = (completedBreakCount + 1).isMultiple(of: 4)
-        let duration = isLongBreak
-            ? HUDViewState.longBreakDuration
-            : HUDViewState.regularDuration
         let state = HUDViewState(
             theme: isNightMode ? .mono : theme,
-            duration: duration,
+            duration: HUDViewState.regularDuration,
             focusExerciseEnabled: focusExerciseEnabled,
-            completedBreakCount: completedBreakCount,
             currentStreak: currentStreak,
             isNightMode: isNightMode,
             isSilentMode: silentMode,
@@ -369,10 +358,6 @@ final class HUDPanelController: NSObject {
             theme: theme,
             duration: max(0.1, duration),
             focusExerciseEnabled: false,
-            completedBreakCount: max(
-                0,
-                userDefaults.integer(forKey: Self.breakCountDefaultsKey)
-            ),
             currentStreak: 0,
             isNightMode: false,
             isSilentMode: false,
@@ -903,14 +888,6 @@ final class HUDPanelController: NSObject {
             // Informational HUDs use the countdown animation but do not
             // participate in break cadence, history, or sounds.
         } else if completedBreak {
-            let completedBreakCount = max(
-                0,
-                userDefaults.integer(forKey: Self.breakCountDefaultsKey)
-            )
-            userDefaults.set(
-                completedBreakCount + 1,
-                forKey: Self.breakCountDefaultsKey
-            )
             onBreakCompleted(timing)
             playSound(named: "Blow", volume: 0.05)
         } else {

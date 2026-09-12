@@ -28,8 +28,8 @@ enum SettingsTransfer {
         let interval = defaults.integer(
             forKey: BreakScheduler.breakIntervalDefaultsKey
         )
-        // breakHistory and breakCount both record completed-break activity,
-        // so neither belongs in a settings archive.
+        // Break history records completed-break activity, so it does not
+        // belong in a settings archive.
         let payload = SettingsPayload(
             breakIntervalMinutes: BreakScheduler.supportedIntervalMinutes
                 .contains(interval)

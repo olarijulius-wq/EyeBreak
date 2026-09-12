@@ -493,7 +493,6 @@ enum HUDLayout {
     static let standardCardHeight: CGFloat = 96
     static let wideCardHeight: CGFloat = 64
     static let compactCardHeight: CGFloat = 110
-    static let longBreakCardHeight: CGFloat = 130
     static let notchedCardTopPadding: CGFloat = 32
     static let noNotchCardTopInset: CGFloat = 12
     static let eyeWidth: CGFloat = 34
@@ -607,7 +606,6 @@ enum FocusExercisePhase: CaseIterable, Equatable {
 
 final class HUDViewState: ObservableObject {
     static let regularDuration: TimeInterval = 20
-    static let longBreakDuration: TimeInterval = 120
     static let heldSubtitle = "Hands off — the timer is waiting"
     static let messages: [(title: String, subtitle: String)] = [
         ("Take an eye break", "Look 20 feet away for 20 seconds"),
@@ -639,11 +637,6 @@ final class HUDViewState: ObservableObject {
         ("Focus buffer", "Give your eyes a different distance"),
         ("Step out of the code", "Find the furthest point you can see")
     ]
-    static let longBreakMessages: [(title: String, subtitle: String)] = [
-        ("Long break", "Stand up and walk away for two minutes"),
-        ("Move", "Get water, stretch, look out a window"),
-        ("Step away", "Two minutes off the screen")
-    ]
 
     private static let deepWorkBundleIdentifierFragments = [
         "xcode",
@@ -654,9 +647,7 @@ final class HUDViewState: ObservableObject {
     ]
 
     let duration: TimeInterval
-    let isLongBreak: Bool
     let message: (title: String, subtitle: String)
-    let completedBreaksInCycle: Int
     let currentStreak: Int
     let isNightMode: Bool
     let isSilentMode: Bool
@@ -688,7 +679,6 @@ final class HUDViewState: ObservableObject {
         theme: Theme,
         duration: TimeInterval,
         focusExerciseEnabled: Bool,
-        completedBreakCount: Int,
         currentStreak: Int,
         isNightMode: Bool,
         isSilentMode: Bool,
@@ -701,8 +691,6 @@ final class HUDViewState: ObservableObject {
     ) {
         self.duration = duration
         self.isInformational = isInformational
-        isLongBreak = !isInformational
-            && duration == Self.longBreakDuration
 
         let selectedMessage: (title: String, subtitle: String)
 
@@ -710,7 +698,6 @@ final class HUDViewState: ObservableObject {
             selectedMessage = messageOverride
         } else {
             let messagePool = Self.messagePool(
-                isLongBreak: isLongBreak,
                 date: date,
                 calendar: calendar,
                 frontmostApplicationBundleIdentifier: frontmostApplicationBundleIdentifier
@@ -728,7 +715,6 @@ final class HUDViewState: ObservableObject {
                 $0.subtitle
             }
         )
-        completedBreaksInCycle = max(0, completedBreakCount) % 4
         self.currentStreak = max(0, currentStreak)
         self.isNightMode = isNightMode
         self.isSilentMode = isSilentMode
@@ -774,15 +760,10 @@ final class HUDViewState: ObservableObject {
     }
 
     private static func messagePool(
-        isLongBreak: Bool,
         date: Date,
         calendar: Calendar,
         frontmostApplicationBundleIdentifier: String?
     ) -> [(title: String, subtitle: String)] {
-        if isLongBreak {
-            return longBreakMessages
-        }
-
         let hour = calendar.component(.hour, from: date)
 
         if hour < 9 {
@@ -863,9 +844,7 @@ final class HUDViewState: ObservableObject {
             break
         }
 
-        return isLongBreak
-            ? HUDLayout.longBreakCardHeight
-            : HUDLayout.standardCardHeight
+        return HUDLayout.standardCardHeight
     }
 
     var cardSize: CGSize {
@@ -2498,12 +2477,6 @@ struct HUDView: View {
                 width: state.cardSize.width,
                 height: cardHeight
             )
-            .overlay(alignment: .bottom) {
-                if !state.isInformational {
-                    cycleIndicator
-                        .padding(.bottom, cycleIndicatorBottomPadding)
-                }
-            }
             .overlay(alignment: .bottomTrailing) {
                 if state.currentStreak >= 3 {
                     streakIndicator
@@ -2671,23 +2644,6 @@ struct HUDView: View {
         .delay(delay * state.entranceDurationMultiplier)
     }
 
-    private var cycleIndicator: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<4, id: \.self) { index in
-                if index < state.completedBreaksInCycle {
-                    Circle()
-                        .fill(state.theme.foreground.opacity(0.9))
-                        .frame(width: 4, height: 4)
-                } else {
-                    Circle()
-                        .strokeBorder(state.theme.foreground.opacity(0.4), lineWidth: 1)
-                        .frame(width: 4, height: 4)
-                }
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
     private var streakIndicator: some View {
         HStack(spacing: 3) {
             Image(systemName: "flame.fill")
@@ -2727,10 +2683,6 @@ struct HUDView: View {
         state.cardSizeVariant == .compact
             ? 10
             : HUDLayout.standardContentSpacing
-    }
-
-    private var cycleIndicatorBottomPadding: CGFloat {
-        state.cardSizeVariant == .wide ? 4 : 10
     }
 
     private var countdownDiameter: CGFloat {
@@ -2773,12 +2725,11 @@ struct HUDView: View {
             return "\(state.message.title). \(state.displayedSubtitle)."
         }
 
-        let cycleDescription = "\(state.completedBreaksInCycle) of 4 breaks completed"
         let streakDescription = state.currentStreak >= 3
             ? " \(state.currentStreak) day streak."
             : ""
 
-        return "\(state.message.title). \(state.displayedSubtitle). \(cycleDescription).\(streakDescription)"
+        return "\(state.message.title). \(state.displayedSubtitle).\(streakDescription)"
     }
 
     @ViewBuilder

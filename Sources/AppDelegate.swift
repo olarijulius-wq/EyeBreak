@@ -208,7 +208,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         defaults.register(defaults: [
             BreakScheduler.breakIntervalDefaultsKey: BreakScheduler.defaultIntervalMinutes,
-            HUDPanelController.breakCountDefaultsKey: 0,
             Self.soundEnabledDefaultsKey: true,
             Self.focusExerciseEnabledDefaultsKey: true,
             Self.escapeShortcutEnabledDefaultsKey: false,

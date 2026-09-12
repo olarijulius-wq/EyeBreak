@@ -5,12 +5,12 @@ EyeBreak is a menu-bar app for macOS 14 and later. It implements the 20-20-20 ru
 ## Features
 
 - Reminder intervals of 15, 20, 30, 45, or 60 minutes, with a five-second warning.
-- Twenty-second regular breaks and a two-minute break after every fourth completed break.
+- Twenty-second eye breaks.
 - Pause, 30-minute snooze, adaptive timing, idle detection, and full-screen suppression.
 - Sound, silent mode, screen dimming, themes, night mode, and an optional focus exercise.
 - Optional stillness, camera-attention, meeting-awareness, and global Escape-key controls.
 - Local 30-day break history, seven-day statistics, streaks, and small or medium widgets.
-- Versioned JSON settings export and import. Break history and accumulated break counts are not included.
+- Versioned JSON settings export and import. Break history is not included.
 - Optional launch at login.
 
 ## Build from source
