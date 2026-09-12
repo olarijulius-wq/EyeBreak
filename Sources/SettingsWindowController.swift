@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 enum SettingsChange {
     case intervalMinutes(Int)
     case adaptiveTiming(Bool)
+    case resetTimerAfterAway(Int)
     case requireStillness(Bool)
     case cameraAttention(Bool)
     case theme(String)
@@ -114,6 +115,8 @@ private struct SettingsView: View {
     private var intervalMinutes = BreakScheduler.defaultIntervalMinutes
     @AppStorage(BreakScheduler.adaptiveTimingDefaultsKey)
     private var adaptiveTimingEnabled = false
+    @AppStorage(BreakScheduler.resetTimerAfterAwayDefaultsKey)
+    private var resetTimerAfterAwayMinutes = BreakScheduler.defaultResetTimerAfterAwayMinutes
     @AppStorage(AppDelegate.requireStillnessEnabledDefaultsKey)
     private var requireStillnessEnabled = false
     @AppStorage(AppDelegate.cameraAttentionEnabledDefaultsKey)
@@ -184,6 +187,11 @@ private struct SettingsView: View {
                 intervalMinutes = BreakScheduler.defaultIntervalMinutes
             }
 
+            if !BreakScheduler.supportedResetTimerAfterAwayMinutes
+                .contains(resetTimerAfterAwayMinutes) {
+                resetTimerAfterAwayMinutes = BreakScheduler.defaultResetTimerAfterAwayMinutes
+            }
+
             let normalizedTheme = ThemeSelection.normalizedRawValue(
                 selectedThemeRawValue
             )
@@ -196,6 +204,9 @@ private struct SettingsView: View {
         }
         .onChange(of: adaptiveTimingEnabled) { _, newValue in
             actions.apply(.adaptiveTiming(newValue))
+        }
+        .onChange(of: resetTimerAfterAwayMinutes) { _, newValue in
+            actions.apply(.resetTimerAfterAway(newValue))
         }
         .onChange(of: requireStillnessEnabled) { _, newValue in
             actions.apply(.requireStillness(newValue))
@@ -247,6 +258,11 @@ private struct SettingsView: View {
                 }
 
                 Toggle("Adaptive timing", isOn: $adaptiveTimingEnabled)
+                Picker("Reset timer after X minutes away", selection: $resetTimerAfterAwayMinutes) {
+                    ForEach(BreakScheduler.supportedResetTimerAfterAwayMinutes, id: \.self) { minutes in
+                        Text(minutes == 0 ? "Off" : "\(minutes) minutes").tag(minutes)
+                    }
+                }
                 Toggle("Require stillness", isOn: $requireStillnessEnabled)
                 Toggle("Camera attention", isOn: $cameraAttentionEnabled)
             }
@@ -496,6 +512,7 @@ private struct SettingsView: View {
     private func resetAllSettings() {
         intervalMinutes = BreakScheduler.defaultIntervalMinutes
         adaptiveTimingEnabled = false
+        resetTimerAfterAwayMinutes = BreakScheduler.defaultResetTimerAfterAwayMinutes
         requireStillnessEnabled = false
         cameraAttentionEnabled = false
 

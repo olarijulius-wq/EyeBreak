@@ -217,7 +217,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Self.calendarAwareEnabledDefaultsKey: false,
             Self.requireStillnessEnabledDefaultsKey: false,
             Self.cameraAttentionEnabledDefaultsKey: false,
-            BreakScheduler.adaptiveTimingDefaultsKey: false
+            BreakScheduler.adaptiveTimingDefaultsKey: false,
+            BreakScheduler.resetTimerAfterAwayDefaultsKey:
+                BreakScheduler.defaultResetTimerAfterAwayMinutes
         ])
         breakHistoryStore.pruneOlderThan30Days()
         configureStatusItem()
@@ -614,6 +616,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             scheduler.setAdaptiveTimingEnabled(isEnabled)
             updateStatusItemIcon()
 
+        case .resetTimerAfterAway(let minutes):
+            scheduler.setResetTimerAfterAwayMinutes(minutes)
+
         case .requireStillness(let isEnabled):
             requireStillnessEnabled = isEnabled
             defaults.set(isEnabled, forKey: Self.requireStillnessEnabledDefaultsKey)
@@ -702,6 +707,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if let adaptiveTimingEnabled = settings.adaptiveTimingEnabled {
             applySettingsChange(.adaptiveTiming(adaptiveTimingEnabled))
+        }
+
+        if let resetTimerAfterAwayMinutes = settings.resetTimerAfterAwayMinutes {
+            applySettingsChange(.resetTimerAfterAway(resetTimerAfterAwayMinutes))
         }
 
         if let snoozeUntil = settings.snoozeUntil {

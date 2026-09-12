@@ -6,8 +6,12 @@ final class BreakScheduler: NSObject {
     static let breakIntervalDefaultsKey = "breakIntervalMinutes"
     static let snoozeUntilDefaultsKey = "snoozeUntil"
     static let adaptiveTimingDefaultsKey = "adaptiveTimingEnabled"
+    static let resetTimerAfterAwayDefaultsKey = "resetTimerAfterAwayMinutes"
+    static let supportedResetTimerAfterAwayMinutes = [0, 5, 10, 15, 30, 60]
+    static let defaultResetTimerAfterAwayMinutes = 10
 
     private static let activitySampleInterval: TimeInterval = 30
+    private static let systemIdlePollInterval: TimeInterval = 15
     private static let idleGapThreshold: TimeInterval = 60
     private static let adaptiveAdvance: TimeInterval = 2 * 60
 
@@ -18,11 +22,13 @@ final class BreakScheduler: NSObject {
     private let shouldSuppressBreak: () -> Bool
     private let onBreakSkipped: () -> Void
     private let onSnoozeEnded: () -> Void
+    private let systemIdleMonitor: SystemIdleTimeMonitoring
     private var preWarningTimer: Timer?
     private var timer: Timer?
     private var adaptivePreWarningTimer: Timer?
     private var adaptiveBreakTimer: Timer?
     private var activitySampleTimer: Timer?
+    private var systemIdlePollTimer: Timer?
     private var snoozeEndTimer: Timer?
     private var regularFireDate: Date?
     private var activityTrackingStartDate: Date?
@@ -32,6 +38,7 @@ final class BreakScheduler: NSObject {
     private(set) var isPaused = false
     private(set) var intervalMinutes: Int
     private(set) var adaptiveTimingEnabled: Bool
+    private(set) var resetTimerAfterAwayMinutes: Int
     private(set) var nextFireDate: Date?
 
     init(
@@ -41,7 +48,8 @@ final class BreakScheduler: NSObject {
         onBreak: @escaping () -> Void,
         shouldSuppressBreak: @escaping () -> Bool = { false },
         onBreakSkipped: @escaping () -> Void = {},
-        onSnoozeEnded: @escaping () -> Void = {}
+        onSnoozeEnded: @escaping () -> Void = {},
+        systemIdleMonitor: SystemIdleTimeMonitoring = SystemIdleTime.shared
     ) {
         self.calendar = calendar
         self.userDefaults = userDefaults
@@ -50,6 +58,7 @@ final class BreakScheduler: NSObject {
         self.shouldSuppressBreak = shouldSuppressBreak
         self.onBreakSkipped = onBreakSkipped
         self.onSnoozeEnded = onSnoozeEnded
+        self.systemIdleMonitor = systemIdleMonitor
 
         let savedInterval = userDefaults.integer(forKey: Self.breakIntervalDefaultsKey)
         intervalMinutes = Self.supportedIntervalMinutes.contains(savedInterval)
@@ -58,6 +67,16 @@ final class BreakScheduler: NSObject {
         adaptiveTimingEnabled = userDefaults.object(
             forKey: Self.adaptiveTimingDefaultsKey
         ) as? Bool ?? false
+        let savedResetTimerAfterAway = userDefaults.object(
+            forKey: Self.resetTimerAfterAwayDefaultsKey
+        ) as? Int
+        if let savedResetTimerAfterAway,
+           Self.supportedResetTimerAfterAwayMinutes
+            .contains(savedResetTimerAfterAway) {
+            resetTimerAfterAwayMinutes = savedResetTimerAfterAway
+        } else {
+            resetTimerAfterAwayMinutes = Self.defaultResetTimerAfterAwayMinutes
+        }
 
         if let savedSnoozeUntil = userDefaults.object(
             forKey: Self.snoozeUntilDefaultsKey
@@ -72,8 +91,26 @@ final class BreakScheduler: NSObject {
 
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
-            selector: #selector(workspaceDidWake(_:)),
+            selector: #selector(workspaceActivityReset(_:)),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(workspaceActivityReset(_:)),
             name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(workspaceActivityReset(_:)),
+            name: NSWorkspace.sessionDidResignActiveNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(workspaceActivityReset(_:)),
+            name: NSWorkspace.sessionDidBecomeActiveNotification,
             object: nil
         )
     }
@@ -86,10 +123,14 @@ final class BreakScheduler: NSObject {
     func start() {
         isPaused = false
         scheduleNextBoundary()
+        startSystemIdlePolling()
+        pollSystemIdleTime()
     }
 
     func stop() {
         invalidateScheduledTimers()
+        systemIdlePollTimer?.invalidate()
+        systemIdlePollTimer = nil
         regularFireDate = nil
         nextFireDate = nil
     }
@@ -102,9 +143,26 @@ final class BreakScheduler: NSObject {
             stop()
         } else {
             scheduleNextBoundary()
+            startSystemIdlePolling()
+            pollSystemIdleTime()
         }
 
         return isPaused
+    }
+
+    func setResetTimerAfterAwayMinutes(_ minutes: Int) {
+        guard Self.supportedResetTimerAfterAwayMinutes.contains(minutes) else {
+            return
+        }
+
+        resetTimerAfterAwayMinutes = minutes
+        userDefaults.set(minutes, forKey: Self.resetTimerAfterAwayDefaultsKey)
+
+        guard !isPaused else {
+            return
+        }
+
+        pollSystemIdleTime()
     }
 
     func setIntervalMinutes(_ minutes: Int) {
@@ -177,7 +235,10 @@ final class BreakScheduler: NSObject {
         return nil
     }
 
-    private func scheduleNextBoundary(after date: Date = Date()) {
+    private func scheduleNextBoundary(
+        after date: Date = Date(),
+        startsNewWorkInterval: Bool = false
+    ) {
         invalidateScheduledTimers()
         regularFireDate = nil
         nextFireDate = nil
@@ -192,13 +253,20 @@ final class BreakScheduler: NSObject {
             return
         }
 
-        guard
-            let fireDate = Self.nextBoundary(
+        let fireDate: Date?
+        if startsNewWorkInterval {
+            fireDate = date.addingTimeInterval(
+                TimeInterval(intervalMinutes * 60)
+            )
+        } else {
+            fireDate = Self.nextBoundary(
                 after: date,
                 intervalMinutes: intervalMinutes,
                 calendar: calendar
             )
-        else {
+        }
+
+        guard let fireDate else {
             return
         }
 
@@ -399,7 +467,7 @@ final class BreakScheduler: NSObject {
         } else {
             let idleThreshold = TimeInterval(intervalMinutes * 60)
             let wasIdleForEntireCycle = checkForEntireCycleIdle
-                && PresentationGuard.secondsSinceLastInput() > idleThreshold
+                && (systemIdleMonitor.idleTime() ?? 0) > idleThreshold
 
             if !wasIdleForEntireCycle {
                 onBreak()
@@ -468,7 +536,9 @@ final class BreakScheduler: NSObject {
             0,
             now.timeIntervalSince(activityTrackingStartDate)
         )
-        let sampledIdleTime = max(0, PresentationGuard.secondsSinceLastInput())
+        guard let sampledIdleTime = systemIdleMonitor.idleTime() else {
+            return
+        }
         let idleTimeWithinCycle = min(sampledIdleTime, elapsedCycleTime)
         let latestInputDate = now.addingTimeInterval(-idleTimeWithinCycle)
 
@@ -516,7 +586,58 @@ final class BreakScheduler: NSObject {
         lastObservedInputDate = nil
     }
 
-    @objc private func workspaceDidWake(_ notification: Notification) {
-        scheduleNextBoundary()
+    private func startSystemIdlePolling() {
+        guard systemIdlePollTimer == nil else {
+            return
+        }
+
+        let timer = Timer(
+            timeInterval: Self.systemIdlePollInterval,
+            target: self,
+            selector: #selector(systemIdlePollTimerFired(_:)),
+            userInfo: nil,
+            repeats: true
+        )
+        RunLoop.main.add(timer, forMode: .common)
+        systemIdlePollTimer = timer
+    }
+
+    @objc private func systemIdlePollTimerFired(_ firedTimer: Timer) {
+        guard firedTimer === systemIdlePollTimer else {
+            return
+        }
+
+        pollSystemIdleTime()
+    }
+
+    func pollSystemIdleTime(at date: Date = Date()) {
+        let threshold = TimeInterval(resetTimerAfterAwayMinutes * 60)
+        guard
+            !isPaused,
+            systemIdleMonitor.hasReachedResetThreshold(threshold)
+        else {
+            return
+        }
+
+        resetWorkTimer(after: date)
+    }
+
+    private func resetWorkTimer(after date: Date = Date()) {
+        guard !isPaused else {
+            return
+        }
+
+        let hadActiveSnooze = snoozeUntil != nil
+        snoozeUntil = nil
+        userDefaults.removeObject(forKey: Self.snoozeUntilDefaultsKey)
+        scheduleNextBoundary(after: date, startsNewWorkInterval: true)
+
+        if hadActiveSnooze {
+            onSnoozeEnded()
+        }
+    }
+
+    @objc private func workspaceActivityReset(_ notification: Notification) {
+        resetWorkTimer()
     }
 }

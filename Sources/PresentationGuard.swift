@@ -15,11 +15,8 @@ struct PresentationGuard {
         return hasActiveScreenCaptureSession()
     }
 
-    static func secondsSinceLastInput() -> TimeInterval {
-        CGEventSource.secondsSinceLastEventType(
-            .combinedSessionState,
-            eventType: .init(rawValue: ~0)!
-        )
+    static func secondsSinceLastInput() -> TimeInterval? {
+        SystemIdleTime.shared.idleTime()
     }
 
     private static func hasFullScreenWindow(processIdentifier: pid_t) -> Bool {

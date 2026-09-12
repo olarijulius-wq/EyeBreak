@@ -6,7 +6,8 @@ EyeBreak is a menu-bar app for macOS 14 and later. It implements the 20-20-20 ru
 
 - Reminder intervals of 15, 20, 30, 45, or 60 minutes, with a five-second warning.
 - Twenty-second eye breaks.
-- Pause, 30-minute snooze, adaptive timing, idle detection, and full-screen suppression.
+- Pause, 30-minute snooze, adaptive timing, and full-screen suppression.
+- System-wide idle detection resets the work timer after 10 minutes away by default; the Timing settings offer Off and other thresholds.
 - Sound, silent mode, screen dimming, themes, night mode, and an optional focus exercise.
 - Optional stillness, camera-attention, meeting-awareness, and global Escape-key controls.
 - Local 30-day break history, seven-day statistics, streaks, and small or medium widgets.
@@ -27,6 +28,12 @@ cd EyeBreak
 The script builds for the Mac's current architecture, targets macOS 14, assembles the app and widget, ad-hoc signs both, and verifies the resulting signatures. The output is `EyeBreak.app` in the repository root.
 
 The current build script also stages repository changes, attempts a timestamped Git commit, and attempts to push the current branch. Use a clean checkout if those Git operations should have nothing to commit.
+
+Run the scheduler’s mocked-idle tests with:
+
+```sh
+./test.sh
+```
 
 ## Install and launch at login
 
@@ -67,6 +74,7 @@ All permission-dependent settings are off by default, and setup requests no perm
 - `Sources/HUDView.swift` — Defines the SwiftUI break card, themes, messages, focus exercise, layouts, and animations.
 - `Sources/OnboardingWindowController.swift` — Presents the first-run explanation and privacy information.
 - `Sources/PresentationGuard.swift` — Detects full-screen or screen-sharing presentation state and reads recent input activity.
+- `Sources/SystemIdleTimeMonitor.swift` — Reads validated system-wide keyboard and mouse idle time through CoreGraphics.
 - `Sources/SettingsTransfer.swift` — Encodes, validates, imports, and exports versioned settings files.
 - `Sources/SettingsWindowController.swift` — Presents the Timing, Appearance, Behaviour, and General settings tabs.
 - `Sources/StatsPanelController.swift` — Displays seven-day counts, held time, streaks, and daily event timelines.

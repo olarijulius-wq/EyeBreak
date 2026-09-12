@@ -11,6 +11,14 @@ private final class FirstMouseHostingView<Content: View>: NSHostingView<Content>
     var onRightClick: (() -> Void)?
     var handlesRightClickAt: ((NSPoint) -> Bool)?
 
+    override var isOpaque: Bool { false }
+
+    func configureClearBackground() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.isOpaque = false
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
@@ -410,6 +418,7 @@ final class HUDPanelController: NSObject {
         )
         let hostingView = FirstMouseHostingView(rootView: rootView)
         hostingView.frame = NSRect(origin: .zero, size: panelSize)
+        hostingView.configureClearBackground()
         hostingView.handlesRightClickAt = { [weak state] location in
             guard
                 let state,
@@ -473,6 +482,12 @@ final class HUDPanelController: NSObject {
         newPanel.animationBehavior = .none
         newPanel.ignoresMouseEvents = false
         newPanel.contentView = hostingView
+
+        assert(!newPanel.isOpaque)
+        assert(newPanel.backgroundColor.alphaComponent == 0)
+        assert(!hostingView.isOpaque)
+        assert(hostingView.layer?.isOpaque == false)
+        assert(hostingView.layer?.backgroundColor?.alpha == 0)
 
         position(newPanel, on: targetScreen)
 
@@ -782,7 +797,8 @@ final class HUDPanelController: NSObject {
         }
 
         let shouldHoldForStillness = requireStillnessEnabled
-            && PresentationGuard.secondsSinceLastInput() < recentInputThreshold
+            && (PresentationGuard.secondsSinceLastInput() ?? .greatestFiniteMagnitude)
+                < recentInputThreshold
         let shouldHoldForCamera = cameraAttentionEnabled && isFacingScreen
         return shouldHoldForStillness || shouldHoldForCamera
     }

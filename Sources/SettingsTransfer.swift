@@ -3,6 +3,7 @@ import Foundation
 struct ImportedSettings {
     let breakIntervalMinutes: Int?
     let adaptiveTimingEnabled: Bool?
+    let resetTimerAfterAwayMinutes: Int?
     let snoozeUntil: Date?
     let requireStillnessEnabled: Bool?
     let cameraAttentionEnabled: Bool?
@@ -38,6 +39,9 @@ enum SettingsTransfer {
             adaptiveTimingEnabled: boolValue(
                 forKey: BreakScheduler.adaptiveTimingDefaultsKey,
                 defaultValue: false,
+                defaults: defaults
+            ),
+            resetTimerAfterAwayMinutes: resetTimerAfterAwayMinutes(
                 defaults: defaults
             ),
             snoozeUntil: defaults.object(
@@ -162,6 +166,15 @@ enum SettingsTransfer {
             )
         }
 
+        if let resetTimerAfterAwayMinutes = archive.settings.resetTimerAfterAwayMinutes,
+           !BreakScheduler.supportedResetTimerAfterAwayMinutes
+            .contains(resetTimerAfterAwayMinutes) {
+            throw SettingsTransferError.invalidSetting(
+                key: BreakScheduler.resetTimerAfterAwayDefaultsKey,
+                reason: "Use one of: \(BreakScheduler.supportedResetTimerAfterAwayMinutes.map(String.init).joined(separator: ", "))."
+            )
+        }
+
         if let theme = archive.settings.selectedTheme,
            theme != ThemeSelection.autoRawValue,
            Theme(rawValue: theme) == nil {
@@ -174,6 +187,7 @@ enum SettingsTransfer {
         return ImportedSettings(
             breakIntervalMinutes: archive.settings.breakIntervalMinutes,
             adaptiveTimingEnabled: archive.settings.adaptiveTimingEnabled,
+            resetTimerAfterAwayMinutes: archive.settings.resetTimerAfterAwayMinutes,
             snoozeUntil: archive.settings.snoozeUntil,
             requireStillnessEnabled: archive.settings.requireStillnessEnabled,
             cameraAttentionEnabled: archive.settings.cameraAttentionEnabled,
@@ -194,6 +208,21 @@ enum SettingsTransfer {
         defaults: UserDefaults
     ) -> Bool {
         defaults.object(forKey: key) as? Bool ?? defaultValue
+    }
+
+    private static func resetTimerAfterAwayMinutes(
+        defaults: UserDefaults
+    ) -> Int {
+        let storedValue = defaults.object(
+            forKey: BreakScheduler.resetTimerAfterAwayDefaultsKey
+        ) as? Int
+        if let storedValue,
+           BreakScheduler.supportedResetTimerAfterAwayMinutes
+            .contains(storedValue) {
+            return storedValue
+        }
+
+        return BreakScheduler.defaultResetTimerAfterAwayMinutes
     }
 
     private static func decodingMessage(for error: Error) -> String {
@@ -234,6 +263,7 @@ private struct SettingsArchive: Codable {
 private struct SettingsPayload: Codable {
     let breakIntervalMinutes: Int?
     let adaptiveTimingEnabled: Bool?
+    let resetTimerAfterAwayMinutes: Int?
     let snoozeUntil: Date?
     let requireStillnessEnabled: Bool?
     let cameraAttentionEnabled: Bool?

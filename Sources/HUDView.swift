@@ -1,1109 +1,156 @@
-import AppKit
-import Combine
 import Foundation
 import SwiftUI
 
-enum Theme: String, CaseIterable {
-    case graphite
-    case sage
-    case peach
-    case lavender
-    case ocean
-    case midnight
-    case ember
-    case matcha
-    case frost
-    case dusk
-    case mono
+enum CardHoverHysteresis {
+    static let trackingPadding: CGFloat = 16
+    static let exitPadding: CGFloat = 20
 
-    var displayName: String {
-        rawValue.capitalized
+    static var contentShapeOutset: CGFloat {
+        max(0, exitPadding - trackingPadding)
     }
 
-    var background: LinearGradient {
-        gradient(startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-
-    func gradient(
-        startPoint: UnitPoint,
-        endPoint: UnitPoint
-    ) -> LinearGradient {
-        let colors: [Color]
-
-        switch self {
-        case .graphite:
-            colors = [
-                Color(red: 0.20, green: 0.22, blue: 0.25),
-                Color(red: 0.07, green: 0.08, blue: 0.10)
-            ]
-        case .sage:
-            colors = [
-                Color(red: 0.32, green: 0.47, blue: 0.35),
-                Color(red: 0.13, green: 0.27, blue: 0.19)
-            ]
-        case .peach:
-            colors = [
-                Color(red: 1.00, green: 0.75, blue: 0.64),
-                Color(red: 0.88, green: 0.43, blue: 0.39)
-            ]
-        case .lavender:
-            colors = [
-                Color(red: 0.43, green: 0.34, blue: 0.66),
-                Color(red: 0.24, green: 0.17, blue: 0.43)
-            ]
-        case .ocean:
-            colors = [
-                Color(red: 0.08, green: 0.43, blue: 0.57),
-                Color(red: 0.04, green: 0.28, blue: 0.49)
-            ]
-        case .midnight:
-            colors = [
-                Color(red: 0.10, green: 0.12, blue: 0.32),
-                Color(red: 0.02, green: 0.02, blue: 0.07)
-            ]
-        case .ember:
-            colors = [
-                Color(red: 0.16, green: 0.15, blue: 0.15),
-                Color(red: 0.34, green: 0.05, blue: 0.06)
-            ]
-        case .matcha:
-            colors = [
-                Color(red: 0.96, green: 0.93, blue: 0.78),
-                Color(red: 0.57, green: 0.68, blue: 0.49)
-            ]
-        case .frost:
-            colors = [
-                Color(red: 0.78, green: 0.92, blue: 1.00),
-                Color(red: 0.98, green: 1.00, blue: 1.00)
-            ]
-        case .dusk:
-            colors = [
-                Color(red: 0.54, green: 0.31, blue: 0.42),
-                Color(red: 0.20, green: 0.10, blue: 0.31)
-            ]
-        case .mono:
-            colors = [.black, .black]
-        }
-
-        return LinearGradient(
-            colors: colors,
-            startPoint: startPoint,
-            endPoint: endPoint
+    static func restingBounds(for cardSize: CGSize) -> CGRect {
+        CGRect(
+            x: trackingPadding,
+            y: trackingPadding,
+            width: cardSize.width,
+            height: cardSize.height
         )
     }
 
-    var accent: Color {
-        accent(saturationScale: 1)
-    }
-
-    func accent(saturationScale: Double) -> Color {
-        let components = accentComponents
-
-        return Color(
-            hue: components.hue,
-            saturation: components.saturation
-                * min(max(saturationScale, 0), 1),
-            brightness: components.brightness
-        )
-    }
-
-    func countdownAccent(progress: Double) -> Color {
-        let progress = min(max(progress, 0), 1)
-        let components = accentComponents
-        let saturationScale = 0.35 + (0.65 * progress)
-
-        return Color(
-            hue: components.hue,
-            saturation: components.saturation * saturationScale,
-            brightness: components.brightness
-        )
-    }
-
-    static func automatic(forHour hour: Int) -> Theme {
-        switch hour {
-        case 5..<9:
-            return .frost
-        case 9..<12:
-            return .matcha
-        case 12..<16:
-            return .sage
-        case 16..<19:
-            return .peach
-        case 19..<22:
-            return .dusk
-        default:
-            return .midnight
-        }
-    }
-
-    private var accentComponents: (
-        hue: Double,
-        saturation: Double,
-        brightness: Double
-    ) {
-        switch self {
-        case .graphite:
-            return (hue: 0.540, saturation: 0.510, brightness: 0.980)
-        case .sage:
-            return (hue: 0.124, saturation: 0.561, brightness: 0.980)
-        case .peach:
-            return (hue: 0.976, saturation: 0.756, brightness: 0.450)
-        case .lavender:
-            return (hue: 0.112, saturation: 0.550, brightness: 1.000)
-        case .ocean:
-            return (hue: 0.471, saturation: 0.421, brightness: 0.950)
-        case .midnight:
-            return (hue: 0.529, saturation: 0.680, brightness: 1.000)
-        case .ember:
-            return (hue: 0.064, saturation: 0.780, brightness: 1.000)
-        case .matcha:
-            return (hue: 0.370, saturation: 0.600, brightness: 0.300)
-        case .frost:
-            return (hue: 0.597, saturation: 0.862, brightness: 0.580)
-        case .dusk:
-            return (hue: 0.114, saturation: 0.454, brightness: 0.970)
-        case .mono:
-            return (hue: 0, saturation: 0, brightness: 1)
-        }
-    }
-
-    var foreground: Color {
-        switch self {
-        case .peach:
-            return Color(red: 0.20, green: 0.09, blue: 0.08)
-        case .matcha:
-            return Color(red: 0.08, green: 0.18, blue: 0.11)
-        case .frost:
-            return Color(red: 0.06, green: 0.15, blue: 0.25)
-        case .graphite, .sage, .lavender, .ocean, .midnight, .ember, .dusk, .mono:
-            return .white
-        }
-    }
-}
-
-enum CardShape: CaseIterable {
-    case capsule
-    case squircle
-    case pill
-    case blob
-    case tag
-    case leaf
-
-    var shape: AnyShape {
-        switch self {
-        case .capsule:
-            return AnyShape(Capsule(style: .continuous))
-        case .squircle:
-            return AnyShape(
-                RoundedRectangle(cornerRadius: 30, style: .continuous)
-            )
-        case .pill:
-            return AnyShape(HalfHeightRoundedRectangle())
-        case .blob:
-            return AnyShape(
-                AsymmetricRoundedForm(
-                    topLeftRadius: 44,
-                    topRightRadius: 18,
-                    bottomRightRadius: 38,
-                    bottomLeftRadius: 24
-                )
-            )
-        case .tag:
-            return AnyShape(
-                AsymmetricRoundedForm(
-                    topLeftRadius: 30,
-                    topRightRadius: 30,
-                    bottomRightRadius: 30,
-                    bottomLeftRadius: 0
-                )
-            )
-        case .leaf:
-            return AnyShape(LeafShape())
-        }
-    }
-}
-
-enum EntranceStyle: CaseIterable {
-    case bubble
-    case unfurl
-    case swing
-    case pour
-    case pop
-    case slide
-    case pixels
-    case blinds
-    case clipwipe
-    case doors
-    case iris
-    case shutter
-    case staggerwipe
-    case wipe
-
-    var duration: TimeInterval {
-        switch self {
-        case .bubble:
-            return 0.64
-        case .unfurl:
-            return 0.70
-        case .swing:
-            return 0.65
-        case .pour:
-            return 0.68
-        case .pop:
-            return 0.35
-        case .slide:
-            return 0.54
-        case .pixels:
-            return PixelTransition.maximumDuration
-        case .blinds:
-            return MaskTransitionTiming.blindsDuration
-        case .clipwipe:
-            return MaskTransitionTiming.clipwipeDuration
-        case .doors:
-            return MaskTransitionTiming.doorsDuration
-        case .iris:
-            return MaskTransitionTiming.irisDuration
-        case .shutter:
-            return MaskTransitionTiming.shutterDuration
-        case .staggerwipe:
-            return MaskTransitionTiming.staggerwipeDuration
-        case .wipe:
-            return MaskTransitionTiming.wipeDuration
-        }
-    }
-
-    var restingOffsetY: CGFloat {
-        8
-    }
-
-    var matchingExitStyle: ExitStyle? {
-        switch self {
-        case .blinds:
-            return .blinds
-        case .clipwipe:
-            return .clipwipe
-        case .doors:
-            return .doors
-        case .iris:
-            return .iris
-        case .shutter:
-            return .shutter
-        case .staggerwipe:
-            return .staggerwipe
-        case .wipe:
-            return .wipe
-        case .bubble, .unfurl, .swing, .pour, .pop, .slide, .pixels:
-            return nil
-        }
-    }
-}
-
-enum ExitStyle: CaseIterable {
-    case shrinkToNotch
-    case fall
-    case dissolve
-    case pixels
-    case blinds
-    case clipwipe
-    case doors
-    case iris
-    case shutter
-    case staggerwipe
-    case wipe
-
-    var duration: TimeInterval {
-        switch self {
-        case .shrinkToNotch:
-            return 0.28
-        case .fall:
-            return 0.50
-        case .dissolve:
-            return 0.42
-        case .pixels:
-            return PixelTransition.maximumDuration
-        case .blinds:
-            return MaskTransitionTiming.blindsDuration
-        case .clipwipe:
-            return MaskTransitionTiming.clipwipeDuration
-        case .doors:
-            return MaskTransitionTiming.doorsDuration
-        case .iris:
-            return MaskTransitionTiming.irisDuration
-        case .shutter:
-            return MaskTransitionTiming.shutterDuration
-        case .staggerwipe:
-            return MaskTransitionTiming.staggerwipeDuration
-        case .wipe:
-            return MaskTransitionTiming.wipeDuration
-        }
-    }
-}
-
-enum CardSizeVariant: Equatable {
-    case standard
-    case wide
-    case compact
-}
-
-private struct HalfHeightRoundedRectangle: Shape {
-    func path(in rect: CGRect) -> Path {
-        RoundedRectangle(
-            cornerRadius: rect.height / 2,
-            style: .circular
-        )
-        .path(in: rect)
-    }
-}
-
-private struct LeafShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        let fullRadius = min(rect.width, rect.height)
-
-        return AsymmetricRoundedForm(
-            topLeftRadius: 0,
-            topRightRadius: fullRadius,
-            bottomRightRadius: 0,
-            bottomLeftRadius: fullRadius
-        )
-        .path(in: rect)
-    }
-}
-
-private struct AsymmetricRoundedForm: Shape {
-    let topLeftRadius: CGFloat
-    let topRightRadius: CGFloat
-    let bottomRightRadius: CGFloat
-    let bottomLeftRadius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        let radii = fittedRadii(in: rect)
-        var path = Path()
-
-        path.move(
-            to: CGPoint(x: rect.minX + radii.topLeft, y: rect.minY)
-        )
-        path.addLine(
-            to: CGPoint(x: rect.maxX - radii.topRight, y: rect.minY)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.minY + radii.topRight),
-            control: CGPoint(x: rect.maxX, y: rect.minY)
-        )
-        path.addLine(
-            to: CGPoint(x: rect.maxX, y: rect.maxY - radii.bottomRight)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - radii.bottomRight, y: rect.maxY),
-            control: CGPoint(x: rect.maxX, y: rect.maxY)
-        )
-        path.addLine(
-            to: CGPoint(x: rect.minX + radii.bottomLeft, y: rect.maxY)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.maxY - radii.bottomLeft),
-            control: CGPoint(x: rect.minX, y: rect.maxY)
-        )
-        path.addLine(
-            to: CGPoint(x: rect.minX, y: rect.minY + radii.topLeft)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + radii.topLeft, y: rect.minY),
-            control: CGPoint(x: rect.minX, y: rect.minY)
-        )
-        path.closeSubpath()
-
-        return path
-    }
-
-    private func fittedRadii(in rect: CGRect) -> (
-        topLeft: CGFloat,
-        topRight: CGFloat,
-        bottomRight: CGFloat,
-        bottomLeft: CGFloat
-    ) {
-        let topLeft = max(0, topLeftRadius)
-        let topRight = max(0, topRightRadius)
-        let bottomRight = max(0, bottomRightRadius)
-        let bottomLeft = max(0, bottomLeftRadius)
-        let largestHorizontalPair = max(
-            topLeft + topRight,
-            bottomLeft + bottomRight
-        )
-        let largestVerticalPair = max(
-            topLeft + bottomLeft,
-            topRight + bottomRight
-        )
-        let horizontalScale = largestHorizontalPair > 0
-            ? rect.width / largestHorizontalPair
-            : 1
-        let verticalScale = largestVerticalPair > 0
-            ? rect.height / largestVerticalPair
-            : 1
-        let scale = min(1, horizontalScale, verticalScale)
-
-        return (
-            topLeft: topLeft * scale,
-            topRight: topRight * scale,
-            bottomRight: bottomRight * scale,
-            bottomLeft: bottomLeft * scale
-        )
-    }
-}
-
-private struct AngledWipeMask: Shape {
-    var progress: CGFloat
-
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let clampedProgress = min(max(progress, 0), 1)
-
-        guard clampedProgress > 0 else {
-            return Path()
-        }
-
-        let angle = CGFloat(12 * Double.pi / 180)
-        let slant = tan(angle) * rect.height
-        let overscan: CGFloat = 2
-        let sweepX = rect.minX
-            + ((rect.width + slant + overscan) * clampedProgress)
-        var path = Path()
-
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: sweepX, y: rect.minY))
-        path.addLine(
-            to: CGPoint(x: sweepX - slant, y: rect.maxY)
-        )
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-
-        return path
-    }
-}
-
-enum HUDLayout {
-    // The transparent margin keeps the blurred glow visible through the
-    // widest card's entrance stretch and a full 120-point downward drag.
-    static let panelSize = CGSize(width: 780, height: 344)
-    static let minimumCardWidth: CGFloat = 320
-    static let maximumCardWidth: CGFloat = 560
-    static let standardCardHeight: CGFloat = 96
-    static let wideCardHeight: CGFloat = 64
-    static let compactCardHeight: CGFloat = 110
-    static let notchedCardTopPadding: CGFloat = 32
-    static let noNotchCardTopInset: CGFloat = 12
-    static let eyeWidth: CGFloat = 34
-    static let standardContentSpacing: CGFloat = 14
-    static let standardSpacerMinimumWidth: CGFloat = 8
-    static let standardHorizontalContentPadding: CGFloat = 22
-    static let standardCountdownDiameter: CGFloat = 48
-    static let cardSizeVariantWidthAdjustment: CGFloat = 140
-}
-
-private enum MaskTransitionTiming {
-    static let blindsBarCount = 8
-    static let blindsStagger: TimeInterval = 0.04
-    static let blindsSpringResponse: TimeInterval = 0.4
-    static let blindsSpringDampingFraction = 0.8
-    static let blindsDuration = Spring(
-        response: blindsSpringResponse,
-        dampingRatio: blindsSpringDampingFraction
-    ).settlingDuration + TimeInterval(blindsBarCount - 1) * blindsStagger
-
-    static let clipwipeDuration: TimeInterval = 0.45
-
-    static let doorsSpringResponse: TimeInterval = 0.45
-    static let doorsSpringDampingFraction = 0.85
-    static let doorsDuration = Spring(
-        response: doorsSpringResponse,
-        dampingRatio: doorsSpringDampingFraction
-    ).settlingDuration
-
-    static let irisDuration: TimeInterval = 0.5
-
-    static let shutterSlatCount = 12
-    static let shutterStagger: TimeInterval = 0.015
-    static let shutterSpringResponse: TimeInterval = 0.35
-    static let shutterSpringDampingFraction = 0.75
-    static let shutterDuration = Spring(
-        response: shutterSpringResponse,
-        dampingRatio: shutterSpringDampingFraction
-    ).settlingDuration
-        + TimeInterval(shutterSlatCount - 1) * shutterStagger
-
-    static let staggerwipeColumnCount = 6
-    static let staggerwipeStagger: TimeInterval = 0.06
-    static let staggerwipeSpringResponse: TimeInterval = 0.5
-    static let staggerwipeSpringDampingFraction = 0.7
-    static let staggerwipeDuration = Spring(
-        response: staggerwipeSpringResponse,
-        dampingRatio: staggerwipeSpringDampingFraction
-    ).settlingDuration
-        + TimeInterval(staggerwipeColumnCount - 1)
-            * staggerwipeStagger
-
-    static let wipeDuration: TimeInterval = 0.4
-}
-
-private enum PixelTransition {
-    static let blockSize: CGFloat = 20
-    static let minimumFallDistance: CGFloat = 120
-    static let maximumFallDistance: CGFloat = 400
-    static let columnDelay: TimeInterval = 0.02
-    static let maximumJitter: TimeInterval = 0.08
-    static let springResponse: TimeInterval = 0.5
-    static let springDampingFraction = 0.7
-    static let springSettlingDuration = Spring(
-        response: springResponse,
-        dampingRatio: springDampingFraction
-    ).settlingDuration
-    static let opacityDuration: TimeInterval = 0.15
-    static let contentDelay: TimeInterval = 0.5
-    static let contentFadeDuration: TimeInterval = 0.3
-
-    static var maximumDuration: TimeInterval {
-        duration(columnCount: columnCount(for: HUDLayout.maximumCardWidth))
-    }
-
-    static func columnCount(for width: CGFloat) -> Int {
-        max(1, Int((width / blockSize).rounded(.up)))
-    }
-
-    static func rowCount(for height: CGFloat) -> Int {
-        max(1, Int((height / blockSize).rounded(.up)))
-    }
-
-    static func duration(columnCount: Int) -> TimeInterval {
-        TimeInterval(max(0, columnCount - 1)) * columnDelay
-            + maximumJitter
-            + springSettlingDuration
-    }
-}
-
-enum FocusExercisePhase: CaseIterable, Equatable {
-    case initialFar
-    case near
-    case finalFar
-
-    var subtitle: String {
-        switch self {
-        case .initialFar:
-            return "Look at something far away"
-        case .near:
-            return "Now look at your fingertip, arm's length"
-        case .finalFar:
-            return "Back to something far away"
-        }
-    }
-
-    var accentSaturationScale: Double {
-        self == .near ? 0.6 : 1
-    }
-}
-
-final class HUDViewState: ObservableObject {
-    static let regularDuration: TimeInterval = 20
-    static let heldSubtitle = "Hands off — the timer is waiting"
-    static let messages: [(title: String, subtitle: String)] = [
-        ("Take an eye break", "Look 20 feet away for 20 seconds"),
-        ("Look away", "Find something far outside the window"),
-        ("Blink reset", "Blink slowly twenty times"),
-        ("Unclench", "Drop your shoulders, straighten your back"),
-        ("Distance check", "Focus on the furthest thing you can see"),
-        ("Breathe", "Four in, four out, eyes closed"),
-        ("Stretch", "Roll your neck once each way")
-    ]
-    static let morningMessages: [(title: String, subtitle: String)] = [
-        ("Ease in", "Let your eyes settle on something far away"),
-        ("Slow start", "Blink softly and look beyond the screen"),
-        ("Morning reset", "Find the daylight and relax your focus"),
-        ("Wake gently", "Look across the room for twenty seconds"),
-        ("Fresh eyes", "Drop your shoulders and soften your gaze")
-    ]
-    static let eveningMessages: [(title: String, subtitle: String)] = [
-        ("Winding down", "Let your eyes rest beyond the screen"),
-        ("Last stretch", "Look far away and loosen your shoulders"),
-        ("Evening reset", "Blink slowly and soften your focus"),
-        ("Almost done", "Give your eyes twenty quiet seconds"),
-        ("Clocking off", "Look away and breathe out slowly")
-    ]
-    static let deepWorkMessages: [(title: String, subtitle: String)] = [
-        ("Screen break", "Lift your focus beyond the display"),
-        ("Deep work reset", "Release your focus from the screen"),
-        ("Refocus", "Look past the pixels for twenty seconds"),
-        ("Focus buffer", "Give your eyes a different distance"),
-        ("Step out of the code", "Find the furthest point you can see")
-    ]
-
-    private static let deepWorkBundleIdentifierFragments = [
-        "xcode",
-        "terminal",
-        "iterm",
-        "code",
-        "ghostty"
-    ]
-
-    let duration: TimeInterval
-    let message: (title: String, subtitle: String)
-    let currentStreak: Int
-    let isNightMode: Bool
-    let isSilentMode: Bool
-    let isInformational: Bool
-    let screenHasNotch: Bool
-    let cardShape: CardShape
-    let entranceStyle: EntranceStyle
-    let exitStyle: ExitStyle
-    let cardSizeVariant: CardSizeVariant
-    let isSlowMotionEntrance: Bool
-    private let standardNaturalCardWidth: CGFloat
-    private let focusExerciseNaturalCardWidth: CGFloat
-    private(set) var entranceStartedAt: Date?
-    @Published var remainingSeconds: TimeInterval
-    @Published var isDismissing = false
-    @Published var isPaused = false
-    @Published var isHeld = false
-    @Published var theme: Theme
-    @Published var focusExerciseEnabled: Bool
-    @Published private(set) var blinkTrigger = 0
-
-    let blinkTimer = Timer.publish(
-        every: 4,
-        on: .main,
-        in: .common
-    ).autoconnect()
-
-    init(
-        theme: Theme,
-        duration: TimeInterval,
-        focusExerciseEnabled: Bool,
-        currentStreak: Int,
-        isNightMode: Bool,
-        isSilentMode: Bool,
-        screenHasNotch: Bool,
-        date: Date,
-        calendar: Calendar,
-        frontmostApplicationBundleIdentifier: String?,
-        messageOverride: (title: String, subtitle: String)? = nil,
-        isInformational: Bool = false
-    ) {
-        self.duration = duration
-        self.isInformational = isInformational
-
-        let selectedMessage: (title: String, subtitle: String)
-
-        if let messageOverride {
-            selectedMessage = messageOverride
-        } else {
-            let messagePool = Self.messagePool(
-                date: date,
-                calendar: calendar,
-                frontmostApplicationBundleIdentifier: frontmostApplicationBundleIdentifier
-            )
-            selectedMessage = messagePool.randomElement() ?? messagePool[0]
-        }
-
-        message = selectedMessage
-        standardNaturalCardWidth = Self.naturalCardWidth(
-            for: selectedMessage
-        )
-        focusExerciseNaturalCardWidth = Self.naturalCardWidth(
-            for: selectedMessage,
-            additionalSubtitles: FocusExercisePhase.allCases.map {
-                $0.subtitle
-            }
-        )
-        self.currentStreak = max(0, currentStreak)
-        self.isNightMode = isNightMode
-        self.isSilentMode = isSilentMode
-        self.screenHasNotch = screenHasNotch
-        cardShape = CardShape.allCases.randomElement() ?? .squircle
-        let entranceStyles = screenHasNotch
-            ? EntranceStyle.allCases
-            : EntranceStyle.allCases.filter { style in
-                switch style {
-                case .bubble, .unfurl:
-                    return false
-                case .swing, .pour, .pop, .slide, .pixels,
-                     .blinds, .clipwipe, .doors, .iris, .shutter,
-                     .staggerwipe, .wipe:
-                    return true
-                }
-            }
-        let selectedEntranceStyle = entranceStyles.randomElement() ?? .slide
-        entranceStyle = selectedEntranceStyle
-
-        if let matchingExitStyle = selectedEntranceStyle.matchingExitStyle {
-            exitStyle = matchingExitStyle
-        } else {
-            let legacyExitStyles: [ExitStyle] = [
-                .shrinkToNotch,
-                .fall,
-                .dissolve,
-                .pixels
-            ]
-            exitStyle = legacyExitStyles.randomElement() ?? .shrinkToNotch
-        }
-
-        if Int.random(in: 0..<15) == 0 {
-            cardSizeVariant = Bool.random() ? .wide : .compact
-        } else {
-            cardSizeVariant = .standard
-        }
-
-        isSlowMotionEntrance = Int.random(in: 0..<25) == 0
-        remainingSeconds = duration
-        self.theme = theme
-        self.focusExerciseEnabled = focusExerciseEnabled
-    }
-
-    private static func messagePool(
-        date: Date,
-        calendar: Calendar,
-        frontmostApplicationBundleIdentifier: String?
-    ) -> [(title: String, subtitle: String)] {
-        let hour = calendar.component(.hour, from: date)
-
-        if hour < 9 {
-            return morningMessages
-        }
-
-        if hour >= 21 {
-            return eveningMessages
-        }
-
-        let bundleIdentifier = frontmostApplicationBundleIdentifier?.lowercased() ?? ""
-        let isDeepWorkApp = deepWorkBundleIdentifierFragments.contains { fragment in
-            bundleIdentifier.contains(fragment)
-        }
-
-        return isDeepWorkApp ? deepWorkMessages : messages
-    }
-
-    private static func naturalCardWidth(
-        for message: (title: String, subtitle: String),
-        additionalSubtitles: [String] = []
-    ) -> CGFloat {
-        let titleWidth = naturalTextWidth(
-            message.title,
-            size: 17,
-            weight: .semibold
-        )
-        let subtitleWidth = ([message.subtitle] + additionalSubtitles)
-            .map {
-                naturalTextWidth(
-                    $0,
-                    size: 13,
-                    weight: .regular
-                )
-            }
-            .max() ?? 0
-        let heldSubtitleWidth = naturalTextWidth(
-            heldSubtitle,
-            size: 13,
-            weight: .regular
-        )
-        let textWidth = max(titleWidth, subtitleWidth, heldSubtitleWidth)
-        let hStackSpacing = HUDLayout.standardContentSpacing * 3
-
-        return ceil(
-            (HUDLayout.standardHorizontalContentPadding * 2)
-                + HUDLayout.eyeWidth
-                + textWidth
-                + HUDLayout.standardSpacerMinimumWidth
-                + HUDLayout.standardCountdownDiameter
-                + hStackSpacing
-        )
-    }
-
-    private static func naturalTextWidth(
-        _ text: String,
-        size: CGFloat,
-        weight: NSFont.Weight
-    ) -> CGFloat {
-        let words = text.split(whereSeparator: { $0.isWhitespace })
-        let font = NSFont.systemFont(ofSize: size, weight: weight)
-        let wordWidth = words.reduce(CGFloat.zero) { total, word in
-            total + (String(word) as NSString).size(
-                withAttributes: [.font: font]
-            ).width
-        }
-        let interwordSpacing = CGFloat(max(0, words.count - 1)) * size * 0.24
-        return wordWidth + interwordSpacing
-    }
-
-    var cardHeight: CGFloat {
-        switch cardSizeVariant {
-        case .wide:
-            return HUDLayout.wideCardHeight
-        case .compact:
-            return HUDLayout.compactCardHeight
-        case .standard:
-            break
-        }
-
-        return HUDLayout.standardCardHeight
-    }
-
-    var cardSize: CGSize {
-        let naturalCardWidth = showsFocusExercise
-            ? focusExerciseNaturalCardWidth
-            : standardNaturalCardWidth
-        let desiredWidth: CGFloat
-
-        switch cardSizeVariant {
-        case .standard:
-            desiredWidth = naturalCardWidth
-        case .wide:
-            desiredWidth = naturalCardWidth
-                + HUDLayout.cardSizeVariantWidthAdjustment
-        case .compact:
-            desiredWidth = naturalCardWidth
-                - HUDLayout.cardSizeVariantWidthAdjustment
-        }
-
-        let width = min(
-            max(desiredWidth, HUDLayout.minimumCardWidth),
-            HUDLayout.maximumCardWidth
-        )
-        return CGSize(width: width, height: cardHeight)
-    }
-
-    var cardTopPadding: CGFloat {
-        if screenHasNotch {
-            return HUDLayout.notchedCardTopPadding
-        }
-
-        return max(
-            0,
-            HUDLayout.noNotchCardTopInset - entranceStyle.restingOffsetY
-        )
-    }
-
-    var restingCardTopInset: CGFloat {
-        cardTopPadding + entranceStyle.restingOffsetY
-    }
-
-    var entranceDurationMultiplier: Double {
-        switch entranceStyle {
-        case .pixels, .blinds, .clipwipe, .doors, .iris, .shutter,
-             .staggerwipe, .wipe:
-            return 1
-        case .bubble, .unfurl, .swing, .pour, .pop, .slide:
-            return isSlowMotionEntrance ? 2.5 : 1
-        }
-    }
-
-    var hasCompletedEntrance: Bool {
-        guard let entranceStartedAt else { return false }
-
-        return Date().timeIntervalSince(entranceStartedAt)
-            >= entranceAnimationDuration
-    }
-
-    private var entranceAnimationDuration: TimeInterval {
-        if case .pixels = entranceStyle {
-            return PixelTransition.duration(
-                columnCount: PixelTransition.columnCount(
-                    for: cardSize.width
+    static func resolvedState(
+        currentState: Bool,
+        location: CGPoint,
+        cardSize: CGSize
+    ) -> Bool {
+        let restingBounds = restingBounds(for: cardSize)
+
+        if currentState {
+            return containsIncludingEdges(
+                location,
+                in: restingBounds.insetBy(
+                    dx: -exitPadding,
+                    dy: -exitPadding
                 )
             )
         }
 
-        return entranceStyle.duration * entranceDurationMultiplier
+        return containsInterior(location, in: restingBounds)
     }
 
-    var progress: Double {
-        min(max(remainingSeconds / duration, 0), 1)
+    private static func containsInterior(
+        _ point: CGPoint,
+        in bounds: CGRect
+    ) -> Bool {
+        point.x > bounds.minX
+            && point.x < bounds.maxX
+            && point.y > bounds.minY
+            && point.y < bounds.maxY
     }
 
-    var showsFocusExercise: Bool {
-        focusExerciseEnabled
-            && !isInformational
-            && duration == Self.regularDuration
+    private static func containsIncludingEdges(
+        _ point: CGPoint,
+        in bounds: CGRect
+    ) -> Bool {
+        point.x >= bounds.minX
+            && point.x <= bounds.maxX
+            && point.y >= bounds.minY
+            && point.y <= bounds.maxY
     }
-
-    var focusExercisePhase: FocusExercisePhase? {
-        guard !isHeld, showsFocusExercise else {
-            return nil
-        }
-
-        let elapsedSeconds = duration - remainingSeconds
-
-        if elapsedSeconds < 10 {
-            return .initialFar
-        }
-
-        if elapsedSeconds < 15 {
-            return .near
-        }
-
-        return .finalFar
-    }
-
-    var displayedSubtitle: String {
-        if isHeld {
-            return Self.heldSubtitle
-        }
-
-        return focusExercisePhase?.subtitle ?? message.subtitle
-    }
-
-    var countdownAccent: Color {
-        guard let focusExercisePhase else {
-            return theme.countdownAccent(progress: progress)
-        }
-
-        return theme.accent(
-            saturationScale: focusExercisePhase.accentSaturationScale
-        )
-    }
-
-    var displayedSeconds: Int {
-        max(0, Int(ceil(remainingSeconds)))
-    }
-
-    var displayedTime: String {
-        guard isLongBreak else {
-            return "\(displayedSeconds)"
-        }
-
-        return String(
-            format: "%d:%02d",
-            displayedSeconds / 60,
-            displayedSeconds % 60
-        )
-    }
-
-    func triggerBlink() {
-        blinkTrigger += 1
-    }
-
-    func markEntranceStarted() {
-        entranceStartedAt = Date()
-    }
-}
-
-private struct EntranceAnimationValues {
-    var scaleX: CGFloat
-    var scaleY: CGFloat
-    var offsetX: CGFloat
-    var offsetY: CGFloat
-    var rotation: Double
-    var opacity: Double
-
-    static let bubbleInitial = EntranceAnimationValues(
-        scaleX: 0.30,
-        scaleY: 0.15,
-        offsetX: 0,
-        offsetY: -20,
-        rotation: 0,
-        opacity: 0
-    )
-
-    static let unfurlInitial = EntranceAnimationValues(
-        scaleX: 1,
-        scaleY: 0.02,
-        offsetX: 0,
-        offsetY: -8,
-        rotation: 0,
-        opacity: 1
-    )
-
-    static let swingInitial = EntranceAnimationValues(
-        scaleX: 1,
-        scaleY: 1,
-        offsetX: -40,
-        offsetY: 8,
-        rotation: -8,
-        opacity: 0
-    )
-
-    static let pourInitial = EntranceAnimationValues(
-        scaleX: 0.20,
-        scaleY: 1.20,
-        offsetX: 0,
-        offsetY: -8,
-        rotation: 0,
-        opacity: 0.2
-    )
-
-    static let popInitial = EntranceAnimationValues(
-        scaleX: 0.40,
-        scaleY: 0.40,
-        offsetX: 0,
-        offsetY: 8,
-        rotation: 0,
-        opacity: 1
-    )
-
-    static let slideInitial = EntranceAnimationValues(
-        scaleX: 1,
-        scaleY: 1,
-        offsetX: -300,
-        offsetY: 8,
-        rotation: -6,
-        opacity: 1
-    )
-}
-
-private struct ExitAnimationValues {
-    var scaleX: CGFloat = 1
-    var scaleY: CGFloat = 1
-    var offsetY: CGFloat = 0
-    var rotation: Double = 0
-    var blurRadius: CGFloat = 0
-    var opacity: Double = 1
 }
 
 struct HUDView: View {
-    private enum MaskTransitionStyle {
-        case blinds
-        case clipwipe
-        case doors
-        case iris
-        case shutter
-        case staggerwipe
-        case wipe
-    }
-
-    private static let hoverMargin: CGFloat = 12
     private static let tiltEdgeInset: CGFloat = 8
-    private static let hoverExitDelayNanoseconds: UInt64 = 250_000_000
 
     @ObservedObject var state: HUDViewState
     let onDismiss: () -> Void
     let onHoverChanged: (Bool) -> Void
 
-    @State private var entranceTrigger = 0
-    @State private var glowIsPulsing = false
+    @State var entranceTrigger = 0
+    @State var glowIsPulsing = false
     @State private var fallbackBlinkScaleY: CGFloat = 1
     @State private var dragOffset: CGFloat = 0
     @State private var tiltX = 0.0
     @State private var tiltY = 0.0
-    @State private var pendingHoverExitTask: Task<Void, Never>?
-    @State private var pixelEntranceTask: Task<Void, Never>?
-    @State private var pixelEntranceStarted = false
-    @State private var pixelContentIsVisible = false
-    @State private var isAssembled = false
-    @State private var pixelExitStarted = false
-    @State private var maskExitStarted = false
-    @State private var pixelAnimationSeed = UInt64.random(
+    @State private var isCardHovered = false
+    @State var pixelEntranceTask: Task<Void, Never>?
+    @State var pixelEntranceStarted = false
+    @State var pixelContentIsVisible = false
+    @State var isAssembled = false
+    @State var pixelExitStarted = false
+    @State var maskExitStarted = false
+    @State var pixelAnimationSeed = UInt64.random(
         in: 0...UInt64.max
     )
-    @State private var exitAnimationValues = ExitAnimationValues()
+    @State var exitAnimationValues = ExitAnimationValues()
 
     var body: some View {
-        animatedCard
+        hoverTrackingContainer
+            .offset(y: hoverContainerOffsetY)
+            .frame(
+                width: HUDLayout.panelSize.width,
+                height: HUDLayout.panelSize.height,
+                alignment: .top
+            )
+            .onAppear {
+                DispatchQueue.main.async {
+                    guard !state.isDismissing else { return }
+                    state.markEntranceStarted()
+                    entranceTrigger += 1
+                    glowIsPulsing = true
+                    startPixelEntranceIfNeeded()
+                }
+            }
+            .onDisappear {
+                pixelEntranceTask?.cancel()
+                pixelEntranceTask = nil
+            }
+            .onReceive(state.blinkTimer) { _ in
+                guard !state.isDismissing else { return }
+                state.triggerBlink()
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(cardAccessibilityLabel)
+            .accessibilityHint(
+                state.isInformational
+                    ? ""
+                    : "Right-click to snooze breaks for 30 minutes"
+            )
+    }
+
+    private var hoverTrackingContainer: some View {
+        // Entrance animations include a resting Y offset. Cancel it here
+        // so the fixed container stays centered on the resting card. This
+        // wrapper intentionally has no rendered background; its shape is
+        // exclusively for stable hover hit testing.
+        hoverAnimatedCard
+            .offset(y: -state.entranceStyle.restingOffsetY)
+            .frame(
+                width: state.cardSize.width
+                    + (CardHoverHysteresis.trackingPadding * 2),
+                height: cardHeight
+                    + (CardHoverHysteresis.trackingPadding * 2)
+            )
             .contentShape(
-                Rectangle().inset(by: -Self.hoverMargin)
+                // The frame supplies 16pt; the stable shape supplies the final
+                // 4pt needed to observe the 20pt exit threshold.
+                Rectangle().inset(
+                    by: -CardHoverHysteresis.contentShapeOutset
+                )
             )
             .onContinuousHover(coordinateSpace: .local) { phase in
-                updateTilt(for: phase)
+                handleContinuousHover(phase)
             }
+    }
+
+    private var hoverAnimatedCard: some View {
+        animatedCard
             .scaleEffect(isInFinalThreeSeconds ? 0.97 : 1)
+            .scaleEffect(isCardHovered ? 1.03 : 1)
+            .animation(
+                .spring(response: 0.3, dampingFraction: 0.5),
+                value: isCardHovered
+            )
             .rotation3DEffect(
                 .degrees(tiltX),
                 axis: (x: 1, y: 0, z: 0),
@@ -1127,39 +174,10 @@ struct HUDView: View {
                     ? ""
                     : "Right-click to snooze breaks for 30 minutes"
             )
-            .onHover(perform: handleHoverChanged)
-            .padding(.top, state.cardTopPadding)
-            .frame(
-                width: HUDLayout.panelSize.width,
-                height: HUDLayout.panelSize.height,
-                alignment: .top
-            )
-            .onAppear {
-                DispatchQueue.main.async {
-                    guard !state.isDismissing else { return }
-                    state.markEntranceStarted()
-                    entranceTrigger += 1
-                    glowIsPulsing = true
-                    startPixelEntranceIfNeeded()
-                }
-            }
-            .onDisappear {
-                pendingHoverExitTask?.cancel()
-                pendingHoverExitTask = nil
-                pixelEntranceTask?.cancel()
-                pixelEntranceTask = nil
-            }
-            .onReceive(state.blinkTimer) { _ in
-                guard !state.isDismissing else { return }
-                state.triggerBlink()
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(cardAccessibilityLabel)
-            .accessibilityHint(
-                state.isInformational
-                    ? ""
-                    : "Right-click to snooze breaks for 30 minutes"
-            )
+    }
+
+    private var hoverContainerOffsetY: CGFloat {
+        state.restingCardTopInset - CardHoverHysteresis.trackingPadding
     }
 
     private var cardDragGesture: some Gesture {
@@ -1200,78 +218,6 @@ struct HUDView: View {
             }
     }
 
-    private func handleHoverChanged(_ isHovering: Bool) {
-        pendingHoverExitTask?.cancel()
-        pendingHoverExitTask = nil
-
-        if isHovering {
-            onHoverChanged(true)
-            return
-        }
-
-        pendingHoverExitTask = Task { @MainActor in
-            try? await Task.sleep(
-                nanoseconds: Self.hoverExitDelayNanoseconds
-            )
-            guard !Task.isCancelled else { return }
-            onHoverChanged(false)
-        }
-    }
-
-    private func startPixelEntranceIfNeeded() {
-        guard case .pixels = state.entranceStyle else { return }
-
-        pixelEntranceTask?.cancel()
-        pixelEntranceStarted = false
-        pixelContentIsVisible = false
-        isAssembled = false
-        pixelExitStarted = false
-
-        let assemblyDuration = PixelTransition.duration(
-            columnCount: pixelColumnCount
-        )
-
-        pixelEntranceTask = Task { @MainActor in
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-            pixelEntranceStarted = true
-
-            do {
-                try await Task.sleep(
-                    nanoseconds: nanoseconds(
-                        for: PixelTransition.contentDelay
-                    )
-                )
-            } catch {
-                return
-            }
-
-            withAnimation(
-                .easeOut(duration: PixelTransition.contentFadeDuration)
-            ) {
-                pixelContentIsVisible = true
-            }
-
-            do {
-                try await Task.sleep(
-                    nanoseconds: nanoseconds(
-                        for: assemblyDuration
-                            - PixelTransition.contentDelay
-                    )
-                )
-            } catch {
-                return
-            }
-
-            guard !Task.isCancelled else { return }
-            isAssembled = true
-        }
-    }
-
-    private func nanoseconds(for duration: TimeInterval) -> UInt64 {
-        UInt64(max(0, duration) * 1_000_000_000)
-    }
-
     private func rubberBandOffset(for translation: CGFloat) -> CGFloat {
         if translation >= 0 {
             return min(
@@ -1283,28 +229,67 @@ struct HUDView: View {
         return max(translation / 4, -20)
     }
 
-    private func updateTilt(for phase: HoverPhase) {
+    private func handleContinuousHover(_ phase: HoverPhase) {
         switch phase {
         case .active(let location):
-            let horizontalPosition = normalizedTiltPosition(
-                location.x,
-                length: state.cardSize.width
+            let resolvedHoverState = CardHoverHysteresis.resolvedState(
+                currentState: isCardHovered,
+                location: location,
+                cardSize: state.cardSize
             )
-            let verticalPosition = normalizedTiltPosition(
-                location.y,
-                length: cardHeight
+            setCardHovered(resolvedHoverState)
+            updateTilt(
+                at: location,
+                isHovering: resolvedHoverState
             )
-
-            tiltX = -Double(verticalPosition) * 4
-            tiltY = Double(horizontalPosition) * 4
 
         case .ended:
-            withAnimation(
-                .spring(response: 0.35, dampingFraction: 0.7)
-            ) {
-                tiltX = 0
-                tiltY = 0
-            }
+            setCardHovered(false)
+            resetTilt()
+        }
+    }
+
+    private func setCardHovered(_ isHovering: Bool) {
+        guard isCardHovered != isHovering else { return }
+
+        isCardHovered = isHovering
+        onHoverChanged(isHovering)
+    }
+
+    private func updateTilt(
+        at location: CGPoint,
+        isHovering: Bool
+    ) {
+        guard isHovering else {
+            resetTilt()
+            return
+        }
+
+        let locationInCard = CGPoint(
+            x: location.x - CardHoverHysteresis.trackingPadding,
+            y: location.y - CardHoverHysteresis.trackingPadding
+        )
+        let horizontalPosition = normalizedTiltPosition(
+            locationInCard.x,
+            length: state.cardSize.width
+        )
+        let verticalPosition = normalizedTiltPosition(
+            locationInCard.y,
+            length: cardHeight
+        )
+
+        tiltX = -Double(verticalPosition) * 4
+        tiltY = Double(horizontalPosition) * 4
+    }
+
+    private func resetTilt() {
+        guard tiltX != 0 || tiltY != 0 else { return }
+
+        withAnimation(
+            .spring(response: 0.35, dampingFraction: 0.7)
+        ) {
+            tiltX = 0
+            tiltY = 0
         }
     }
 
@@ -1328,1243 +313,92 @@ struct HUDView: View {
             / (maximumPosition - minimumPosition)) * 2 - 1
     }
 
-    private var animatedCard: some View {
-        transitionCard
-            .scaleEffect(
-                x: exitAnimationValues.scaleX,
-                y: exitAnimationValues.scaleY,
-                anchor: .top
-            )
-            .rotationEffect(
-                .degrees(exitAnimationValues.rotation),
-                anchor: .top
-            )
-            .offset(y: exitAnimationValues.offsetY)
-            .blur(radius: exitAnimationValues.blurRadius)
-            .opacity(exitAnimationValues.opacity)
-            .onChange(of: state.isDismissing) { _, isDismissing in
-                guard isDismissing else { return }
-                animateExit()
-            }
-    }
-
-    @ViewBuilder
-    private var transitionCard: some View {
-        if usesPixelExit {
-            pixelExitCard
-        } else if let activeMaskStyle {
-            maskTransitionCard(
-                style: activeMaskStyle,
-                isExiting: state.isDismissing
-            )
-        } else {
-            entranceAnimatedCard
-        }
-    }
-
-    private var usesPixelExit: Bool {
-        guard state.isDismissing else { return false }
-        guard case .pixels = state.exitStyle else { return false }
-        return true
-    }
-
-    private var activeMaskStyle: MaskTransitionStyle? {
-        maskExitStyle ?? maskEntranceStyle
-    }
-
-    private var maskExitStyle: MaskTransitionStyle? {
-        guard state.isDismissing else { return nil }
-
-        switch state.exitStyle {
-        case .blinds:
-            return .blinds
-        case .clipwipe:
-            return .clipwipe
-        case .doors:
-            return .doors
-        case .iris:
-            return .iris
-        case .shutter:
-            return .shutter
-        case .staggerwipe:
-            return .staggerwipe
-        case .wipe:
-            return .wipe
-        case .shrinkToNotch, .fall, .dissolve, .pixels:
-            return nil
-        }
-    }
-
-    private var maskEntranceStyle: MaskTransitionStyle? {
-        switch state.entranceStyle {
-        case .blinds:
-            return .blinds
-        case .clipwipe:
-            return .clipwipe
-        case .doors:
-            return .doors
-        case .iris:
-            return .iris
-        case .shutter:
-            return .shutter
-        case .staggerwipe:
-            return .staggerwipe
-        case .wipe:
-            return .wipe
-        case .bubble, .unfurl, .swing, .pour, .pop, .slide, .pixels:
-            return nil
-        }
-    }
-
-    @ViewBuilder
-    private var entranceAnimatedCard: some View {
-        switch state.entranceStyle {
-        case .bubble:
-            bubbleEntrance
-        case .unfurl:
-            unfurlEntrance
-        case .swing:
-            swingEntrance
-        case .pour:
-            pourEntrance
-        case .pop:
-            popEntrance
-        case .slide:
-            slideEntrance
-        case .pixels:
-            pixelEntrance
-        case .blinds:
-            maskTransitionCard(style: .blinds, isExiting: false)
-        case .clipwipe:
-            maskTransitionCard(style: .clipwipe, isExiting: false)
-        case .doors:
-            maskTransitionCard(style: .doors, isExiting: false)
-        case .iris:
-            maskTransitionCard(style: .iris, isExiting: false)
-        case .shutter:
-            maskTransitionCard(style: .shutter, isExiting: false)
-        case .staggerwipe:
-            maskTransitionCard(style: .staggerwipe, isExiting: false)
-        case .wipe:
-            maskTransitionCard(style: .wipe, isExiting: false)
-        }
-    }
-
-    private func maskTransitionCard(
-        style: MaskTransitionStyle,
-        isExiting: Bool
-    ) -> some View {
-        let isRevealed = isExiting
-            ? !maskExitStarted
-            : entranceTrigger > 0
-
-        return shapedCard
-            .mask {
-                transitionMask(
-                    style: style,
-                    isRevealed: isRevealed,
-                    isExiting: isExiting
-                )
-            }
-            .offset(y: state.entranceStyle.restingOffsetY)
-    }
-
-    @ViewBuilder
-    private func transitionMask(
-        style: MaskTransitionStyle,
-        isRevealed: Bool,
-        isExiting: Bool
-    ) -> some View {
-        switch style {
-        case .blinds:
-            blindsMask(
-                isRevealed: isRevealed,
-                isExiting: isExiting
-            )
-        case .clipwipe:
-            clipwipeMask(
-                isRevealed: isRevealed,
-                isExiting: isExiting
-            )
-        case .doors:
-            doorsMask(isRevealed: isRevealed)
-        case .iris:
-            irisMask(
-                isRevealed: isRevealed,
-                isExiting: isExiting
-            )
-        case .shutter:
-            shutterMask(
-                isRevealed: isRevealed,
-                isExiting: isExiting
-            )
-        case .staggerwipe:
-            staggerwipeMask(
-                isRevealed: isRevealed,
-                isExiting: isExiting
-            )
-        case .wipe:
-            wipeMask(isRevealed: isRevealed)
-        }
-    }
-
-    private func blindsMask(
-        isRevealed: Bool,
-        isExiting: Bool
-    ) -> some View {
-        VStack(spacing: -1) {
-            ForEach(
-                0..<MaskTransitionTiming.blindsBarCount,
-                id: \.self
-            ) { index in
-                Rectangle()
-                    .fill(.white)
-                    .frame(
-                        height: (
-                            cardHeight + CGFloat(
-                                MaskTransitionTiming.blindsBarCount - 1
-                            )
-                        ) / CGFloat(MaskTransitionTiming.blindsBarCount)
-                    )
-                    .scaleEffect(
-                        x: 1,
-                        y: isRevealed ? 1 : 0,
-                        anchor: .center
-                    )
-                    .animation(
-                        .spring(
-                            response: MaskTransitionTiming
-                                .blindsSpringResponse,
-                            dampingFraction: MaskTransitionTiming
-                                .blindsSpringDampingFraction
-                        )
-                        .delay(
-                            maskStaggerDelay(
-                                index: index,
-                                count: MaskTransitionTiming.blindsBarCount,
-                                stagger: MaskTransitionTiming.blindsStagger,
-                                isExiting: isExiting
-                            )
-                        ),
-                        value: isRevealed
-                    )
-            }
-        }
-        .frame(
-            width: state.cardSize.width,
-            height: cardHeight
-        )
-    }
-
-    private func clipwipeMask(
-        isRevealed: Bool,
-        isExiting: Bool
-    ) -> some View {
-        let animation: Animation = isExiting
-            ? .easeIn(duration: MaskTransitionTiming.clipwipeDuration)
-            : .easeOut(duration: MaskTransitionTiming.clipwipeDuration)
-
-        return AngledWipeMask(progress: isRevealed ? 1 : 0)
-            .fill(.white)
-            .frame(
-                width: state.cardSize.width,
-                height: cardHeight
-            )
-            .animation(animation, value: isRevealed)
-    }
-
-    private func doorsMask(isRevealed: Bool) -> some View {
-        HStack(spacing: -1) {
-            Rectangle()
-                .fill(.white)
-                .scaleEffect(
-                    x: isRevealed ? 1 : 0,
-                    y: 1,
-                    anchor: .trailing
-                )
-
-            Rectangle()
-                .fill(.white)
-                .scaleEffect(
-                    x: isRevealed ? 1 : 0,
-                    y: 1,
-                    anchor: .leading
-                )
-        }
-        .frame(
-            width: state.cardSize.width,
-            height: cardHeight
-        )
-        .animation(
-            .spring(
-                response: MaskTransitionTiming.doorsSpringResponse,
-                dampingFraction: MaskTransitionTiming
-                    .doorsSpringDampingFraction
-            ),
-            value: isRevealed
-        )
-    }
-
-    private func irisMask(
-        isRevealed: Bool,
-        isExiting: Bool
-    ) -> some View {
-        let diameter = sqrt(
-            (state.cardSize.width * state.cardSize.width)
-                + (cardHeight * cardHeight)
-        ) + 2
-        let animation: Animation = isExiting
-            ? .easeIn(duration: MaskTransitionTiming.irisDuration)
-            : .easeOut(duration: MaskTransitionTiming.irisDuration)
-
-        return Circle()
-            .fill(.white)
-            .frame(width: diameter, height: diameter)
-            .scaleEffect(isRevealed ? 1 : 0, anchor: .center)
-            .frame(
-                width: state.cardSize.width,
-                height: cardHeight
-            )
-            .animation(animation, value: isRevealed)
-    }
-
-    private func shutterMask(
-        isRevealed: Bool,
-        isExiting: Bool
-    ) -> some View {
-        HStack(spacing: -1) {
-            ForEach(
-                0..<MaskTransitionTiming.shutterSlatCount,
-                id: \.self
-            ) { index in
-                Rectangle()
-                    .fill(.white)
-                    .frame(
-                        width: (
-                            state.cardSize.width + CGFloat(
-                                MaskTransitionTiming.shutterSlatCount - 1
-                            )
-                        ) / CGFloat(MaskTransitionTiming.shutterSlatCount)
-                    )
-                    .scaleEffect(
-                        x: isRevealed ? 1 : 0,
-                        y: 1,
-                        anchor: .center
-                    )
-                    .animation(
-                        .spring(
-                            response: MaskTransitionTiming
-                                .shutterSpringResponse,
-                            dampingFraction: MaskTransitionTiming
-                                .shutterSpringDampingFraction
-                        )
-                        .delay(
-                            maskStaggerDelay(
-                                index: index,
-                                count: MaskTransitionTiming
-                                    .shutterSlatCount,
-                                stagger: MaskTransitionTiming
-                                    .shutterStagger,
-                                isExiting: isExiting
-                            )
-                        ),
-                        value: isRevealed
-                    )
-            }
-        }
-        .frame(
-            width: state.cardSize.width,
-            height: cardHeight
-        )
-    }
-
-    private func staggerwipeMask(
-        isRevealed: Bool,
-        isExiting: Bool
-    ) -> some View {
-        HStack(spacing: -1) {
-            ForEach(
-                0..<MaskTransitionTiming.staggerwipeColumnCount,
-                id: \.self
-            ) { index in
-                Rectangle()
-                    .fill(.white)
-                    .frame(
-                        width: (
-                            state.cardSize.width + CGFloat(
-                                MaskTransitionTiming
-                                    .staggerwipeColumnCount - 1
-                            )
-                        ) / CGFloat(
-                                MaskTransitionTiming
-                                    .staggerwipeColumnCount
-                            ),
-                        height: cardHeight
-                    )
-                    .offset(y: isRevealed ? 0 : -cardHeight)
-                    .animation(
-                        .spring(
-                            response: MaskTransitionTiming
-                                .staggerwipeSpringResponse,
-                            dampingFraction: MaskTransitionTiming
-                                .staggerwipeSpringDampingFraction
-                        )
-                        .delay(
-                            maskStaggerDelay(
-                                index: index,
-                                count: MaskTransitionTiming
-                                    .staggerwipeColumnCount,
-                                stagger: MaskTransitionTiming
-                                    .staggerwipeStagger,
-                                isExiting: isExiting
-                            )
-                        ),
-                        value: isRevealed
-                    )
-            }
-        }
-        .frame(
-            width: state.cardSize.width,
-            height: cardHeight
-        )
-    }
-
-    private func wipeMask(isRevealed: Bool) -> some View {
-        Rectangle()
-            .fill(.white)
-            .frame(
-                width: isRevealed ? state.cardSize.width : 0,
-                height: cardHeight
-            )
-            .frame(
-                width: state.cardSize.width,
-                height: cardHeight,
-                alignment: .leading
-            )
-            .animation(
-                .easeInOut(duration: MaskTransitionTiming.wipeDuration),
-                value: isRevealed
-            )
-    }
-
-    private func maskStaggerDelay(
-        index: Int,
-        count: Int,
-        stagger: TimeInterval,
-        isExiting: Bool
-    ) -> TimeInterval {
-        let staggerIndex = isExiting ? count - 1 - index : index
-        return TimeInterval(staggerIndex) * stagger
-    }
-
-    private var shapedCard: some View {
-        let silhouette: AnyShape = state.cardShape.shape
-        let glowColor = state.theme.accent
-        let glowOpacity = state.isNightMode
-            ? 0.08
-            : (glowIsPulsing ? 0.4 : 0.25)
-        let isGlowAnimating = glowIsPulsing && !state.isNightMode
-
-        return card
-            .clipShape(silhouette)
-            .overlay {
-                silhouette
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            }
-            .background {
-                silhouette
-                    .fill(glowColor)
-                    .opacity(glowOpacity)
-                    .blur(radius: 30)
-                    .scaleEffect(1.05)
-                    .animation(
-                        .easeInOut(duration: 1.5)
-                            .repeatForever(autoreverses: true),
-                        value: isGlowAnimating
-                    )
-            }
-    }
-
-    @ViewBuilder
-    private var pixelEntrance: some View {
-        if isAssembled {
-            shapedCard
-                .offset(y: state.entranceStyle.restingOffsetY)
-        } else {
-            pixelTransitionCard(isExiting: false)
-        }
-    }
-
-    private var pixelExitCard: some View {
-        pixelTransitionCard(isExiting: true)
-    }
-
-    private func pixelTransitionCard(isExiting: Bool) -> some View {
-        let silhouette: AnyShape = state.cardShape.shape
-        let contentOpacity = isExiting
-            ? (pixelExitStarted ? 0.0 : 1.0)
-            : (pixelContentIsVisible ? 1.0 : 0.0)
-        let contentAnimation: Animation = isExiting
-            ? .easeIn(duration: PixelTransition.opacityDuration)
-            : .easeOut(duration: PixelTransition.contentFadeDuration)
-
-        return ZStack {
-            pixelGrid(isExiting: isExiting)
-
-            cardForeground
-                .clipShape(silhouette)
-                .opacity(contentOpacity)
-                .animation(contentAnimation, value: contentOpacity)
-        }
-        .overlay {
-            silhouette
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                .opacity(contentOpacity)
-                .animation(contentAnimation, value: contentOpacity)
-        }
-        .frame(
-            width: state.cardSize.width,
-            height: cardHeight
-        )
-        .offset(y: state.entranceStyle.restingOffsetY)
-    }
-
-    private func pixelGrid(isExiting: Bool) -> some View {
-        let blockCount = pixelColumnCount * pixelRowCount
-
-        return ZStack(alignment: .topLeading) {
-            ForEach(0..<blockCount, id: \.self) { index in
-                pixelBlock(index: index, isExiting: isExiting)
-            }
-        }
-        .frame(
-            width: state.cardSize.width,
-            height: cardHeight,
-            alignment: .topLeading
-        )
-    }
-
-    private func pixelBlock(
-        index: Int,
-        isExiting: Bool
-    ) -> some View {
-        let column = index % pixelColumnCount
-        let row = index / pixelColumnCount
-        let isAnimating = isExiting
-            ? pixelExitStarted
-            : pixelEntranceStarted
-        let distance = pixelFallDistance(for: index)
-        let delay = pixelDelay(
-            column: column,
-            index: index,
-            isExiting: isExiting
-        )
-        let offsetY: CGFloat
-        let opacity: Double
-
-        if isExiting {
-            offsetY = isAnimating ? distance : 0
-            opacity = isAnimating ? 0 : 1
-        } else {
-            offsetY = isAnimating ? 0 : -distance
-            opacity = isAnimating ? 1 : 0
-        }
-
-        let fallingBlock = driftingBackground
-            .frame(
-                width: state.cardSize.width,
-                height: cardHeight
-            )
-            .clipShape(state.cardShape.shape)
-            .mask(alignment: .topLeading) {
-                Rectangle()
-                    .frame(
-                        width: PixelTransition.blockSize,
-                        height: PixelTransition.blockSize
-                    )
-                    .offset(
-                        x: CGFloat(column) * PixelTransition.blockSize,
-                        y: CGFloat(row) * PixelTransition.blockSize
-                    )
-            }
-            .offset(y: offsetY)
-            .animation(
-                .spring(
-                    response: PixelTransition.springResponse,
-                    dampingFraction: PixelTransition.springDampingFraction
-                )
-                .delay(delay),
-                value: isAnimating
-            )
-
-        return fallingBlock
-            .opacity(opacity)
-            .animation(
-                .linear(duration: PixelTransition.opacityDuration)
-                    .delay(delay),
-                value: isAnimating
-            )
-    }
-
-    private var pixelColumnCount: Int {
-        PixelTransition.columnCount(for: state.cardSize.width)
-    }
-
-    private var pixelRowCount: Int {
-        PixelTransition.rowCount(for: cardHeight)
-    }
-
-    private func pixelDelay(
-        column: Int,
-        index: Int,
-        isExiting: Bool
-    ) -> TimeInterval {
-        let cascadeColumn = isExiting
-            ? pixelColumnCount - 1 - column
-            : column
-        let jitter = pixelRandomUnit(
-            index: index,
-            salt: 0xA24B_AED4_963E_E407
-        ) * PixelTransition.maximumJitter
-
-        return TimeInterval(cascadeColumn) * PixelTransition.columnDelay
-            + jitter
-    }
-
-    private func pixelFallDistance(for index: Int) -> CGFloat {
-        let unitValue = pixelRandomUnit(
-            index: index,
-            salt: 0x9FB2_1C65_1E98_DF25
-        )
-        return PixelTransition.minimumFallDistance
-            + CGFloat(unitValue)
-                * (
-                    PixelTransition.maximumFallDistance
-                        - PixelTransition.minimumFallDistance
-                )
-    }
-
-    private func pixelRandomUnit(
-        index: Int,
-        salt: UInt64
-    ) -> Double {
-        var value = pixelAnimationSeed
-            &+ UInt64(index) &* 0x9E37_79B9_7F4A_7C15
-            &+ salt
-        value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
-        value ^= value >> 31
-
-        return Double(value >> 11) / 9_007_199_254_740_992
-    }
-
-    private var bubbleEntrance: some View {
-        let multiplier = state.entranceDurationMultiplier
-
-        return shapedCard
-            .keyframeAnimator(
-                initialValue: EntranceAnimationValues.bubbleInitial,
-                trigger: entranceTrigger
-            ) { content, values in
-                content
-                    .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
-                        anchor: .top
-                    )
-                    .rotationEffect(
-                        .degrees(values.rotation),
-                        anchor: .top
-                    )
-                    .offset(x: values.offsetX, y: values.offsetY)
-                    .opacity(values.opacity)
-            } keyframes: { _ in
-                KeyframeTrack(\.scaleX) {
-                    SpringKeyframe(
-                        1.12,
-                        duration: 0.28 * multiplier,
-                        spring: Spring(
-                            duration: 0.28 * multiplier,
-                            bounce: 0.10
-                        )
-                    )
-                    SpringKeyframe(
-                        0.94,
-                        duration: 0.14 * multiplier,
-                        spring: Spring(
-                            duration: 0.14 * multiplier,
-                            bounce: 0.08
-                        )
-                    )
-                    SpringKeyframe(
-                        1.03,
-                        duration: 0.12 * multiplier,
-                        spring: Spring(
-                            duration: 0.12 * multiplier,
-                            bounce: 0.06
-                        )
-                    )
-                    SpringKeyframe(
-                        1.00,
-                        duration: 0.10 * multiplier,
-                        spring: Spring(
-                            duration: 0.10 * multiplier,
-                            bounce: 0.04
-                        )
-                    )
-                }
-
-                KeyframeTrack(\.scaleY) {
-                    SpringKeyframe(
-                        0.88,
-                        duration: 0.28 * multiplier,
-                        spring: Spring(
-                            duration: 0.28 * multiplier,
-                            bounce: 0.10
-                        )
-                    )
-                    SpringKeyframe(
-                        1.10,
-                        duration: 0.14 * multiplier,
-                        spring: Spring(
-                            duration: 0.14 * multiplier,
-                            bounce: 0.08
-                        )
-                    )
-                    SpringKeyframe(
-                        0.97,
-                        duration: 0.12 * multiplier,
-                        spring: Spring(
-                            duration: 0.12 * multiplier,
-                            bounce: 0.06
-                        )
-                    )
-                    SpringKeyframe(
-                        1.00,
-                        duration: 0.10 * multiplier,
-                        spring: Spring(
-                            duration: 0.10 * multiplier,
-                            bounce: 0.04
-                        )
-                    )
-                }
-
-                KeyframeTrack(\.offsetY) {
-                    SpringKeyframe(
-                        12,
-                        duration: 0.28 * multiplier,
-                        spring: Spring(
-                            duration: 0.28 * multiplier,
-                            bounce: 0.10
-                        )
-                    )
-                    SpringKeyframe(
-                        5,
-                        duration: 0.14 * multiplier,
-                        spring: Spring(
-                            duration: 0.14 * multiplier,
-                            bounce: 0.08
-                        )
-                    )
-                    SpringKeyframe(
-                        9,
-                        duration: 0.12 * multiplier,
-                        spring: Spring(
-                            duration: 0.12 * multiplier,
-                            bounce: 0.06
-                        )
-                    )
-                    SpringKeyframe(
-                        8,
-                        duration: 0.10 * multiplier,
-                        spring: Spring(
-                            duration: 0.10 * multiplier,
-                            bounce: 0.04
-                        )
-                    )
-                }
-
-                KeyframeTrack(\.opacity) {
-                    SpringKeyframe(
-                        1,
-                        duration: 0.28 * multiplier,
-                        spring: Spring(
-                            duration: 0.28 * multiplier,
-                            bounce: 0
-                        )
-                    )
-                }
-            }
-    }
-
-    private var unfurlEntrance: some View {
-        let multiplier = state.entranceDurationMultiplier
-
-        return shapedCard
-            .keyframeAnimator(
-                initialValue: EntranceAnimationValues.unfurlInitial,
-                trigger: entranceTrigger
-            ) { content, values in
-                content
-                    .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
-                        anchor: .top
-                    )
-                    .rotationEffect(.degrees(values.rotation), anchor: .top)
-                    .offset(x: values.offsetX, y: values.offsetY)
-                    .opacity(values.opacity)
-            } keyframes: { _ in
-                KeyframeTrack(\.scaleY) {
-                    CubicKeyframe(0.20, duration: 0.16 * multiplier)
-                    CubicKeyframe(0.78, duration: 0.24 * multiplier)
-                    SpringKeyframe(
-                        1.06,
-                        duration: 0.18 * multiplier,
-                        spring: Spring(
-                            duration: 0.18 * multiplier,
-                            bounce: 0.08
-                        )
-                    )
-                    SpringKeyframe(
-                        1,
-                        duration: 0.12 * multiplier,
-                        spring: Spring(
-                            duration: 0.12 * multiplier,
-                            bounce: 0.04
-                        )
-                    )
-                }
-
-                KeyframeTrack(\.offsetY) {
-                    CubicKeyframe(-6, duration: 0.16 * multiplier)
-                    CubicKeyframe(7, duration: 0.24 * multiplier)
-                    SpringKeyframe(
-                        9,
-                        duration: 0.18 * multiplier,
-                        spring: Spring(
-                            duration: 0.18 * multiplier,
-                            bounce: 0.06
-                        )
-                    )
-                    SpringKeyframe(
-                        8,
-                        duration: 0.12 * multiplier,
-                        spring: Spring(
-                            duration: 0.12 * multiplier,
-                            bounce: 0.03
-                        )
-                    )
-                }
-            }
-    }
-
-    private var swingEntrance: some View {
-        let multiplier = state.entranceDurationMultiplier
-
-        return shapedCard
-            .keyframeAnimator(
-                initialValue: EntranceAnimationValues.swingInitial,
-                trigger: entranceTrigger
-            ) { content, values in
-                content
-                    .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
-                        anchor: .topLeading
-                    )
-                    .rotationEffect(
-                        .degrees(values.rotation),
-                        anchor: .topLeading
-                    )
-                    .offset(x: values.offsetX, y: values.offsetY)
-                    .opacity(values.opacity)
-            } keyframes: { _ in
-                KeyframeTrack(\.offsetX) {
-                    CubicKeyframe(10, duration: 0.28 * multiplier)
-                    CubicKeyframe(-4, duration: 0.20 * multiplier)
-                    CubicKeyframe(0, duration: 0.17 * multiplier)
-                }
-
-                KeyframeTrack(\.offsetY) {
-                    LinearKeyframe(8, duration: 0.65 * multiplier)
-                }
-
-                KeyframeTrack(\.rotation) {
-                    CubicKeyframe(3.5, duration: 0.28 * multiplier)
-                    CubicKeyframe(-1.5, duration: 0.20 * multiplier)
-                    CubicKeyframe(0, duration: 0.17 * multiplier)
-                }
-
-                KeyframeTrack(\.opacity) {
-                    LinearKeyframe(1, duration: 0.18 * multiplier)
-                }
-            }
-    }
-
-    private var pourEntrance: some View {
-        let multiplier = state.entranceDurationMultiplier
-
-        return shapedCard
-            .keyframeAnimator(
-                initialValue: EntranceAnimationValues.pourInitial,
-                trigger: entranceTrigger
-            ) { content, values in
-                content
-                    .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
-                        anchor: .top
-                    )
-                    .rotationEffect(.degrees(values.rotation), anchor: .top)
-                    .offset(x: values.offsetX, y: values.offsetY)
-                    .opacity(values.opacity)
-            } keyframes: { _ in
-                KeyframeTrack(\.scaleX) {
-                    CubicKeyframe(0.72, duration: 0.18 * multiplier)
-                    SpringKeyframe(
-                        1.12,
-                        duration: 0.22 * multiplier,
-                        spring: Spring(
-                            duration: 0.22 * multiplier,
-                            bounce: 0.12
-                        )
-                    )
-                    SpringKeyframe(
-                        0.96,
-                        duration: 0.16 * multiplier,
-                        spring: Spring(
-                            duration: 0.16 * multiplier,
-                            bounce: 0.08
-                        )
-                    )
-                    SpringKeyframe(
-                        1,
-                        duration: 0.12 * multiplier,
-                        spring: Spring(
-                            duration: 0.12 * multiplier,
-                            bounce: 0.04
-                        )
-                    )
-                }
-
-                KeyframeTrack(\.scaleY) {
-                    CubicKeyframe(0.92, duration: 0.18 * multiplier)
-                    SpringKeyframe(
-                        0.76,
-                        duration: 0.22 * multiplier,
-                        spring: Spring(
-                            duration: 0.22 * multiplier,
-                            bounce: 0.10
-                        )
-                    )
-                    SpringKeyframe(
-                        1.08,
-                        duration: 0.16 * multiplier,
-                        spring: Spring(
-                            duration: 0.16 * multiplier,
-                            bounce: 0.08
-                        )
-                    )
-                    SpringKeyframe(
-                        1,
-                        duration: 0.12 * multiplier,
-                        spring: Spring(
-                            duration: 0.12 * multiplier,
-                            bounce: 0.04
-                        )
-                    )
-                }
-
-                KeyframeTrack(\.offsetY) {
-                    CubicKeyframe(4, duration: 0.18 * multiplier)
-                    SpringKeyframe(
-                        10,
-                        duration: 0.22 * multiplier,
-                        spring: Spring(
-                            duration: 0.22 * multiplier,
-                            bounce: 0.08
-                        )
-                    )
-                    SpringKeyframe(
-                        7,
-                        duration: 0.16 * multiplier,
-                        spring: Spring(
-                            duration: 0.16 * multiplier,
-                            bounce: 0.05
-                        )
-                    )
-                    SpringKeyframe(
-                        8,
-                        duration: 0.12 * multiplier,
-                        spring: Spring(
-                            duration: 0.12 * multiplier,
-                            bounce: 0.03
-                        )
-                    )
-                }
-
-                KeyframeTrack(\.opacity) {
-                    LinearKeyframe(1, duration: 0.15 * multiplier)
-                }
-            }
-    }
-
-    private var popEntrance: some View {
-        let multiplier = state.entranceDurationMultiplier
-
-        return shapedCard
-            .keyframeAnimator(
-                initialValue: EntranceAnimationValues.popInitial,
-                trigger: entranceTrigger
-            ) { content, values in
-                content
-                    .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
-                        anchor: .center
-                    )
-                    .rotationEffect(.degrees(values.rotation))
-                    .offset(x: values.offsetX, y: values.offsetY)
-                    .opacity(values.opacity)
-            } keyframes: { _ in
-                KeyframeTrack(\.scaleX) {
-                    SpringKeyframe(
-                        1.15,
-                        duration: 0.18 * multiplier,
-                        spring: Spring(
-                            duration: 0.18 * multiplier,
-                            bounce: 0.32
-                        )
-                    )
-                    SpringKeyframe(
-                        1,
-                        duration: 0.17 * multiplier,
-                        spring: Spring(
-                            duration: 0.17 * multiplier,
-                            bounce: 0.12
-                        )
-                    )
-                }
-
-                KeyframeTrack(\.scaleY) {
-                    SpringKeyframe(
-                        1.15,
-                        duration: 0.18 * multiplier,
-                        spring: Spring(
-                            duration: 0.18 * multiplier,
-                            bounce: 0.32
-                        )
-                    )
-                    SpringKeyframe(
-                        1,
-                        duration: 0.17 * multiplier,
-                        spring: Spring(
-                            duration: 0.17 * multiplier,
-                            bounce: 0.12
-                        )
-                    )
-                }
-
-                KeyframeTrack(\.offsetY) {
-                    LinearKeyframe(8, duration: 0.35 * multiplier)
-                }
-            }
-    }
-
-    private var slideEntrance: some View {
-        let multiplier = state.entranceDurationMultiplier
-
-        return shapedCard
-            .keyframeAnimator(
-                initialValue: EntranceAnimationValues.slideInitial,
-                trigger: entranceTrigger
-            ) { content, values in
-                content
-                    .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
-                        anchor: .center
-                    )
-                    .rotationEffect(.degrees(values.rotation))
-                    .offset(x: values.offsetX, y: values.offsetY)
-                    .opacity(values.opacity)
-            } keyframes: { _ in
-                KeyframeTrack(\.offsetX) {
-                    CubicKeyframe(-60, duration: 0.22 * multiplier)
-                    CubicKeyframe(-12, duration: 0.12 * multiplier)
-                    CubicKeyframe(3, duration: 0.10 * multiplier)
-                    CubicKeyframe(0, duration: 0.10 * multiplier)
-                }
-
-                KeyframeTrack(\.offsetY) {
-                    LinearKeyframe(8, duration: 0.54 * multiplier)
-                }
-
-                KeyframeTrack(\.rotation) {
-                    CubicKeyframe(-2.5, duration: 0.22 * multiplier)
-                    CubicKeyframe(0.8, duration: 0.12 * multiplier)
-                    CubicKeyframe(-0.2, duration: 0.10 * multiplier)
-                    CubicKeyframe(0, duration: 0.10 * multiplier)
-                }
-
-            }
-    }
-
-    private func animateExit() {
-        pixelEntranceTask?.cancel()
-        pixelEntranceTask = nil
-
-        switch state.exitStyle {
-        case .shrinkToNotch:
-            withAnimation(.easeIn(duration: state.exitStyle.duration)) {
-                exitAnimationValues.scaleX = 0.30
-                exitAnimationValues.scaleY = 0.15
-                exitAnimationValues.offsetY = -28
-                exitAnimationValues.opacity = 0
-            }
-
-        case .fall:
-            withAnimation(
-                .timingCurve(
-                    0.55,
-                    0,
-                    0.95,
-                    0.45,
-                    duration: state.exitStyle.duration
-                )
-            ) {
-                exitAnimationValues.offsetY = HUDLayout.panelSize.height
-                    + state.cardSize.height
-                exitAnimationValues.rotation = 7
-            }
-
-        case .dissolve:
-            withAnimation(.easeInOut(duration: state.exitStyle.duration)) {
-                exitAnimationValues.blurRadius = 20
-                exitAnimationValues.opacity = 0
-            }
-
-        case .pixels:
-            pixelExitStarted = false
-
-            DispatchQueue.main.async {
-                guard state.isDismissing else { return }
-                pixelExitStarted = true
-            }
-
-        case .blinds, .clipwipe, .doors, .iris, .shutter,
-             .staggerwipe, .wipe:
-            maskExitStarted = false
-
-            DispatchQueue.main.async {
-                guard state.isDismissing else { return }
-                maskExitStarted = true
-            }
-        }
-    }
-
-    private var card: some View {
+    var card: some View {
         cardForeground
             .background {
                 cardBackground
             }
     }
 
-    private var cardForeground: some View {
+    var cardSilhouette: AnyShape {
+        state.cardShape.shape
+    }
+
+    var cardForeground: some View {
         cardContent
             .frame(
                 width: state.cardSize.width,
                 height: cardHeight
             )
-            .overlay(alignment: .bottomTrailing) {
-                if state.currentStreak >= 3 {
-                    streakIndicator
-                        .padding(.trailing, 12)
-                        .padding(.bottom, 9)
-                }
-            }
     }
 
     private var cardBackground: some View {
-        ZStack {
-            driftingBackground
+        let silhouette = cardSilhouette
 
-            Rectangle()
+        return ZStack {
+            silhouette
+                .fill(driftingBackground)
+
+            silhouette
                 .fill(.ultraThinMaterial)
                 .opacity(0.16)
         }
     }
 
-    @ViewBuilder
     private var cardContent: some View {
-        if state.cardSizeVariant == .compact {
-            compactStaticContent
-        } else {
-            staticContent
-        }
-    }
-
-    private var staticContent: some View {
-        HStack(spacing: contentSpacing) {
+        HStack(spacing: HUDLayout.standardContentSpacing) {
             animatedEye
 
-            VStack(alignment: .leading, spacing: 3) {
-                animatedWords(
-                    state.message.title,
-                    size: 17,
-                    weight: .semibold
-                )
+            VStack(
+                alignment: .leading,
+                spacing: HUDLayout.titleSubtitleSpacing
+            ) {
+                HStack(spacing: HUDLayout.titleBadgeSpacing) {
+                    cardTitle
+
+                    if state.currentStreak >= 3 {
+                        streakIndicator
+                    }
+                }
 
                 animatedSubtitle(
-                    size: 13,
-                    lineLimit: 1,
-                    minimumScaleFactor: 0.85
+                    size: HUDLayout.subtitleFontSize,
+                    lineLimit: state.cardSizeVariant == .compact ? 2 : 1,
+                    minimumScaleFactor: state.cardSizeVariant == .compact
+                        ? 0.82
+                        : 0.85
                 )
             }
-
-            Spacer(minLength: HUDLayout.standardSpacerMinimumWidth)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
 
             countdownRing
         }
-        .padding(.leading, horizontalContentPadding)
-        .padding(.trailing, trailingContentPadding)
+        .padding(.horizontal, HUDLayout.standardHorizontalContentPadding)
     }
 
-    private var compactStaticContent: some View {
-        HStack(spacing: 10) {
-            animatedEye
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(state.message.title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .lineLimit(1)
-
-                animatedSubtitle(
-                    size: 12,
-                    lineLimit: 2,
-                    minimumScaleFactor: 0.82
-                )
-            }
-            .foregroundStyle(state.theme.foreground)
+    @ViewBuilder
+    private var cardTitle: some View {
+        if state.cardSizeVariant == .compact {
+            rollingTitle(
+                state.message.title,
+                size: HUDLayout.titleFontSize,
+                weight: .semibold,
+                animatesEntranceByWord: false
+            )
             .opacity(entranceTextIsVisible ? 1 : 0)
             .offset(y: entranceTextIsVisible ? 0 : 6)
             .animation(
                 textEntranceAnimation(delay: 0.25),
                 value: entranceTrigger
             )
-            .animation(
-                .easeInOut(duration: 0.3),
-                value: state.isHeld
+        } else {
+            animatedWords(
+                state.message.title,
+                size: HUDLayout.titleFontSize,
+                weight: .semibold
             )
-
-            Spacer(minLength: 2)
-
-            countdownRing
         }
-        .padding(.leading, horizontalContentPadding)
-        .padding(.trailing, trailingContentPadding)
-        .padding(.bottom, 6)
     }
 
     private func animatedWords(
@@ -2573,27 +407,127 @@ struct HUDView: View {
         weight: Font.Weight,
         startingAt startingIndex: Int = 0
     ) -> some View {
+        rollingTitle(
+            text,
+            size: size,
+            weight: weight,
+            startingAt: startingIndex,
+            animatesEntranceByWord: true
+        )
+    }
+
+    private func rollingTitle(
+        _ text: String,
+        size: CGFloat,
+        weight: Font.Weight,
+        startingAt startingIndex: Int = 0,
+        animatesEntranceByWord: Bool
+    ) -> some View {
+        let lineHeight = ceil(size * 1.25)
+
+        return ZStack(alignment: .leading) {
+            rollingTitleLine(
+                text,
+                size: size,
+                weight: weight,
+                startingAt: startingIndex,
+                lineHeight: lineHeight,
+                isReplacement: false,
+                animatesEntranceByWord: animatesEntranceByWord
+            )
+
+            rollingTitleLine(
+                state.isHeld ? "Timer waiting" : "Still counting",
+                size: size,
+                weight: weight,
+                startingAt: startingIndex,
+                lineHeight: lineHeight,
+                isReplacement: true,
+                animatesEntranceByWord: animatesEntranceByWord
+            )
+        }
+        .frame(height: lineHeight)
+        .clipped()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
+    }
+
+    private func rollingTitleLine(
+        _ text: String,
+        size: CGFloat,
+        weight: Font.Weight,
+        startingAt startingIndex: Int,
+        lineHeight: CGFloat,
+        isReplacement: Bool,
+        animatesEntranceByWord: Bool
+    ) -> some View {
         let words = text.split(whereSeparator: { $0.isWhitespace })
 
         return HStack(spacing: size * 0.24) {
             ForEach(Array(words.enumerated()), id: \.offset) { index, word in
-                Text(String(word))
-                    .font(.system(size: size, weight: weight))
-                    .foregroundStyle(state.theme.foreground)
-                    .lineLimit(1)
-                    .opacity(entranceTextIsVisible ? 1 : 0)
-                    .offset(y: entranceTextIsVisible ? 0 : 6)
+                let characterStart = words.prefix(index).reduce(0) {
+                    $0 + $1.count + 1
+                }
+
+                HStack(spacing: 0) {
+                    ForEach(
+                        Array(String(word).enumerated()),
+                        id: \.offset
+                    ) { characterIndex, character in
+                        Text(String(character))
+                            .offset(
+                                y: rollingCharacterOffset(
+                                    lineHeight: lineHeight,
+                                    isReplacement: isReplacement
+                                )
+                            )
+                            .animation(
+                                .easeInOut(duration: 0.22)
+                                    .delay(
+                                        Double(
+                                            characterStart + characterIndex
+                                        ) * 0.02
+                                    ),
+                                value: isCardHovered
+                            )
+                    }
+                }
+                    .opacity(
+                        animatesEntranceByWord
+                            ? (entranceTextIsVisible ? 1 : 0)
+                            : 1
+                    )
+                    .offset(
+                        y: animatesEntranceByWord
+                            && !entranceTextIsVisible
+                            ? 6
+                            : 0
+                    )
                     .animation(
-                        textEntranceAnimation(
-                            delay: 0.25
-                                + Double(startingIndex + index) * 0.06
-                        ),
+                        animatesEntranceByWord
+                            ? textEntranceAnimation(
+                                delay: 0.25
+                                    + Double(startingIndex + index) * 0.06
+                            )
+                            : nil,
                         value: entranceTrigger
                     )
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
+        .font(.system(size: size, weight: weight))
+        .foregroundStyle(state.theme.foreground)
+        .lineLimit(1)
+    }
+
+    private func rollingCharacterOffset(
+        lineHeight: CGFloat,
+        isReplacement: Bool
+    ) -> CGFloat {
+        if isReplacement {
+            return isCardHovered ? 0 : lineHeight
+        }
+
+        return isCardHovered ? -lineHeight : 0
     }
 
     private func animatedSubtitle(
@@ -2645,62 +579,31 @@ struct HUDView: View {
     }
 
     private var streakIndicator: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: HUDLayout.streakIndicatorSpacing) {
             Image(systemName: "flame.fill")
             Text("\(state.currentStreak)")
                 .monospacedDigit()
         }
-        .font(.system(size: 11, weight: .medium))
+        .font(
+            .system(
+                size: HUDLayout.streakIndicatorFontSize,
+                weight: .medium
+            )
+        )
         .foregroundStyle(state.theme.foreground.opacity(0.6))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(state.currentStreak) day streak")
     }
 
-    private var cardHeight: CGFloat {
+    var cardHeight: CGFloat {
         state.cardHeight
-    }
-
-    private var horizontalContentPadding: CGFloat {
-        switch state.cardSizeVariant {
-        case .standard:
-            return HUDLayout.standardHorizontalContentPadding
-        case .wide:
-            return 18
-        case .compact:
-            return 14
-        }
-    }
-
-    private var trailingContentPadding: CGFloat {
-        if state.currentStreak >= 3, state.cardSizeVariant == .wide {
-            return 56
-        }
-
-        return horizontalContentPadding
-    }
-
-    private var contentSpacing: CGFloat {
-        state.cardSizeVariant == .compact
-            ? 10
-            : HUDLayout.standardContentSpacing
-    }
-
-    private var countdownDiameter: CGFloat {
-        switch state.cardSizeVariant {
-        case .standard:
-            return HUDLayout.standardCountdownDiameter
-        case .wide:
-            return 40
-        case .compact:
-            return 44
-        }
     }
 
     private var isInFinalThreeSeconds: Bool {
         state.remainingSeconds < 3
     }
 
-    private var driftingBackground: LinearGradient {
+    var driftingBackground: LinearGradient {
         let elapsedProgress = 1 - state.progress
         let angle = (Double.pi / 4)
             + (elapsedProgress * 2 * Double.pi / 3)
@@ -2754,7 +657,7 @@ struct HUDView: View {
             Image(systemName: "eye.trianglebadge.exclamationmark")
                 .opacity(state.isHeld ? 1 : 0)
         }
-        .font(.system(size: 26, weight: .semibold))
+        .font(.system(size: HUDLayout.eyeIconFontSize, weight: .semibold))
         .symbolRenderingMode(.monochrome)
         .foregroundStyle(state.theme.foreground)
         .frame(width: HUDLayout.eyeWidth, height: HUDLayout.eyeWidth)
@@ -2774,7 +677,7 @@ struct HUDView: View {
     }
 
     private var countdownRing: some View {
-        let lineWidth: CGFloat = isInFinalThreeSeconds ? 5 : 3
+        let lineWidth = HUDLayout.countdownStrokeWidth
 
         return ZStack {
             Circle()
@@ -2803,13 +706,22 @@ struct HUDView: View {
                     value: state.isHeld
                 )
 
-            Text(state.displayedTime)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+            Text("\(state.displayedSeconds)")
+                .font(
+                    .system(
+                        size: HUDLayout.countdownNumberFontSize,
+                        weight: .semibold,
+                        design: .rounded
+                    )
+                )
                 .monospacedDigit()
                 .foregroundStyle(state.theme.foreground)
                 .contentTransition(.numericText())
         }
-        .frame(width: countdownDiameter, height: countdownDiameter)
+        .frame(
+            width: HUDLayout.standardCountdownDiameter,
+            height: HUDLayout.standardCountdownDiameter
+        )
         .animation(
             .easeInOut(duration: 0.4),
             value: isInFinalThreeSeconds
