@@ -85,65 +85,44 @@ let tilePath = CGPath(
     transform: nil
 )
 
-let graphiteColors = [
-    CGColor(red: 0.20, green: 0.22, blue: 0.25, alpha: 1),
-    CGColor(red: 0.07, green: 0.08, blue: 0.10, alpha: 1)
-] as CFArray
-
-guard let graphiteGradient = CGGradient(
-    colorsSpace: colorSpace,
-    colors: graphiteColors,
-    locations: [0, 1]
-) else {
-    fputs("Could not create the icon gradient.\n", stderr)
-    exit(1)
-}
-
+// A warm, softly luminous orb on the same near-black base as the UI.
 context.saveGState()
 context.addPath(tilePath)
 context.clip()
-context.drawLinearGradient(
-    graphiteGradient,
-    start: CGPoint(x: 160, y: 864),
-    end: CGPoint(x: 864, y: 160),
-    options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-)
-context.restoreGState()
+context.setFillColor(CGColor(red: 5 / 255, green: 3 / 255, blue: 3 / 255, alpha: 1))
+context.fill(tileRect)
 
-context.addPath(tilePath)
-context.setStrokeColor(CGColor(gray: 1, alpha: 0.10))
-context.setLineWidth(10)
-context.strokePath()
+func drawGlow(center: CGPoint, radius: CGFloat, colors: [CGColor], stops: [CGFloat]) {
+    guard let gradient = CGGradient(colorsSpace: colorSpace, colors: colors as CFArray, locations: stops) else { return }
+    context.drawRadialGradient(
+        gradient,
+        startCenter: center,
+        startRadius: 0,
+        endCenter: center,
+        endRadius: radius,
+        options: []
+    )
+}
 
-let eyePath = CGMutablePath()
-eyePath.move(to: CGPoint(x: 214, y: 512))
-eyePath.addCurve(
-    to: CGPoint(x: 810, y: 512),
-    control1: CGPoint(x: 340, y: 704),
-    control2: CGPoint(x: 684, y: 704)
+drawGlow(
+    center: CGPoint(x: 468, y: 592), radius: 460,
+    colors: [
+        CGColor(red: 0.78, green: 0.48, blue: 0.24, alpha: 0.68),
+        CGColor(red: 0.48, green: 0.18, blue: 0.11, alpha: 0.35),
+        CGColor(red: 0.48, green: 0.18, blue: 0.11, alpha: 0)
+    ],
+    stops: [0, 0.42, 1]
 )
-eyePath.addCurve(
-    to: CGPoint(x: 214, y: 512),
-    control1: CGPoint(x: 684, y: 320),
-    control2: CGPoint(x: 340, y: 320)
+drawGlow(
+    center: CGPoint(x: 512, y: 524), radius: 272,
+    colors: [
+        CGColor(red: 0.96, green: 0.85, blue: 0.68, alpha: 1),
+        CGColor(red: 0.84, green: 0.60, blue: 0.35, alpha: 0.98),
+        CGColor(red: 0.78, green: 0.42, blue: 0.23, alpha: 0.72),
+        CGColor(red: 0.48, green: 0.18, blue: 0.11, alpha: 0)
+    ],
+    stops: [0, 0.46, 0.78, 1]
 )
-
-let white = CGColor(gray: 1, alpha: 0.96)
-context.saveGState()
-context.setShadow(
-    offset: CGSize(width: 0, height: -8),
-    blur: 22,
-    color: CGColor(gray: 1, alpha: 0.22)
-)
-context.addPath(eyePath)
-context.setStrokeColor(white)
-context.setLineWidth(54)
-context.setLineJoin(.round)
-context.setLineCap(.round)
-context.strokePath()
-
-context.setFillColor(white)
-context.fillEllipse(in: CGRect(x: 414, y: 414, width: 196, height: 196))
 context.restoreGState()
 
 guard let image = context.makeImage(),

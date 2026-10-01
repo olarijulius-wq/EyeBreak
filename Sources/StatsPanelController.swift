@@ -21,6 +21,9 @@ final class StatsPanelController: NSWindowController {
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .utilityWindow
+        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.titlebarAppearsTransparent = true
+        panel.backgroundColor = NSColor(EyeBreakDesign.base)
 
         super.init(window: panel)
         shouldCascadeWindows = false
@@ -101,12 +104,13 @@ final class StatsPanelController: NSWindowController {
         window.setFrame(
             targetFrame,
             display: true,
-            animate: window.isVisible
+            animate: window.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         )
     }
 }
 
 private struct BreakStatsView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var historyStore: BreakHistoryStore
     let onDetailExpansionChanged: (Bool) -> Void
 
@@ -115,21 +119,28 @@ private struct BreakStatsView: View {
     var body: some View {
         let days = historyStore.lastSevenDays()
 
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.sm) {
+            HStack(alignment: .center, spacing: EyeBreakDesign.Spacing.md) {
                 Text("\(historyStore.todayCompletedCount())")
-                    .font(.system(size: 38, weight: .semibold, design: .rounded))
+                    .font(.system(size: 64, weight: .light))
+                    .tracking(-2)
+                    .monospacedDigit()
+                    .foregroundStyle(EyeBreakDesign.textPrimary)
                     .contentTransition(.numericText())
 
-                Text("completed today")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.xxs) {
+                    MicroLabel("TODAY")
+                    Text("Completed breaks")
+                        .font(EyeBreakDesign.Typography.metadata)
+                        .foregroundStyle(EyeBreakDesign.textSecondary)
+                }
             }
+            .frame(height: 76)
 
-            HStack(spacing: 14) {
-                LegendItem(color: .accentColor, title: "Completed")
-                LegendItem(color: .secondary.opacity(0.55), title: "Skipped")
-                LegendItem(color: .accentColor.opacity(0.22), title: "Held")
+            HStack(spacing: EyeBreakDesign.Spacing.md) {
+                LegendItem(color: EyeBreakDesign.textPrimary, title: "Completed")
+                LegendItem(color: EyeBreakDesign.textSecondary, title: "Skipped")
+                LegendItem(color: EyeBreakDesign.rust, title: "Held")
             }
 
             WeeklyBreakBarChart(
@@ -137,7 +148,7 @@ private struct BreakStatsView: View {
                 selectedDayKey: selectedDayKey,
                 onSelect: selectDay
             )
-                .frame(height: 116)
+                .frame(height: 100)
 
             if
                 let selectedDayKey,
@@ -146,7 +157,9 @@ private struct BreakStatsView: View {
                 })
             {
                 DayBreakTimeline(day: selectedDay)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .frame(maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.top, EyeBreakDesign.Spacing.sm)
+                    .transition(.opacity)
             }
         }
         .padding(20)
@@ -157,8 +170,9 @@ private struct BreakStatsView: View {
                 : StatsPanelController.expandedContentSize.height,
             alignment: .topLeading
         )
-        .background(Color(nsColor: .windowBackgroundColor))
-        .animation(.easeInOut(duration: 0.18), value: selectedDayKey)
+        .background(AtmosphereBackground(palette: .ember))
+        .preferredColorScheme(.dark)
+        .animation(.easeInOut(duration: reduceMotion ? 0.1 : 0.25), value: selectedDayKey)
         .onChange(of: selectedDayKey) { _, newValue in
             onDetailExpansionChanged(newValue != nil)
         }
@@ -184,14 +198,14 @@ private struct LegendItem: View {
     let title: String
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: EyeBreakDesign.Spacing.xs) {
             Circle()
                 .fill(color)
-                .frame(width: 7, height: 7)
+                .frame(width: 4, height: 4)
 
             Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(EyeBreakDesign.Typography.metadata)
+                .foregroundStyle(EyeBreakDesign.textSecondary)
         }
     }
 }
@@ -211,35 +225,37 @@ private struct WeeklyBreakBarChart: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let barAreaHeight = max(1, geometry.size.height - 22)
+            let barAreaHeight = max(1, geometry.size.height - 38)
 
-            HStack(alignment: .bottom, spacing: 10) {
-                ForEach(days) { day in
-                    Button {
-                        onSelect(day.dateKey)
-                    } label: {
-                        VStack(spacing: 5) {
+            VStack(spacing: EyeBreakDesign.Spacing.xs) {
+                HStack(alignment: .bottom, spacing: 0) {
+                    ForEach(days) { day in
+                        Button {
+                            onSelect(day.dateKey)
+                        } label: {
                             ZStack(alignment: .bottom) {
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color.secondary.opacity(0.10))
+                                Capsule()
+                                    .fill(EyeBreakDesign.textTertiary.opacity(0.2))
+                                    .frame(width: 2)
 
                                 if day.heldSeconds > 0 {
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(Color.accentColor.opacity(0.22))
+                                    Capsule()
+                                        .fill(EyeBreakDesign.rust.opacity(0.75))
                                         .frame(
+                                            width: 12,
                                             height: heldHeight(
                                                 day.heldSeconds,
                                                 availableHeight: barAreaHeight
                                             )
                                         )
-                                        .padding(.horizontal, 2)
                                 }
 
                                 VStack(spacing: 1) {
                                     if day.completed > 0 {
-                                        RoundedRectangle(cornerRadius: 3)
-                                            .fill(Color.accentColor)
+                                        Capsule()
+                                            .fill(EyeBreakDesign.textPrimary)
                                             .frame(
+                                                width: 4,
                                                 height: segmentHeight(
                                                     day.completed,
                                                     availableHeight: barAreaHeight
@@ -248,9 +264,10 @@ private struct WeeklyBreakBarChart: View {
                                     }
 
                                     if day.skipped > 0 {
-                                        RoundedRectangle(cornerRadius: 3)
-                                            .fill(Color.secondary.opacity(0.55))
+                                        Capsule()
+                                            .fill(EyeBreakDesign.textSecondary)
                                             .frame(
+                                                width: 4,
                                                 height: segmentHeight(
                                                     day.skipped,
                                                     availableHeight: barAreaHeight
@@ -258,39 +275,33 @@ private struct WeeklyBreakBarChart: View {
                                             )
                                     }
                                 }
-                                .frame(maxWidth: .infinity)
-                                .padding(.horizontal, 6)
-
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(
-                                        day.dateKey == selectedDayKey
-                                            ? Color.accentColor
-                                            : Color.clear,
-                                        lineWidth: 2
-                                    )
                             }
                             .frame(maxWidth: .infinity)
                             .frame(height: barAreaHeight)
-
-                            Text(day.date, format: .dateTime.weekday(.narrow))
-                                .font(.caption2)
-                                .foregroundStyle(
-                                    day.dateKey == selectedDayKey
-                                        ? Color.accentColor
-                                        : Color.secondary
-                                )
+                            .background(GlowSelection(isActive: day.dateKey == selectedDayKey))
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity)
+                        .help(daySummary(day))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(
+                            Text(day.date, format: .dateTime.weekday(.wide))
+                        )
+                        .accessibilityValue(daySummary(day))
                     }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                    .help(daySummary(day))
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(
-                        Text(day.date, format: .dateTime.weekday(.wide))
-                    )
-                    .accessibilityValue(daySummary(day))
                 }
+
+                DayStrip(
+                    labels: days.map { $0.date.formatted(.dateTime.weekday(.narrow)) },
+                    selectedIndex: days.firstIndex { $0.dateKey == selectedDayKey }
+                        ?? days.indices.last,
+                    onSelect: { index in onSelect(days[index].dateKey) },
+                    accessibilityLabels: days.map { day in
+                        day.date.formatted(date: .complete, time: .omitted)
+                            + ", " + daySummary(day)
+                    }
+                )
             }
         }
     }
@@ -346,11 +357,8 @@ private struct WeeklyBreakBarChart: View {
 private struct DayBreakTimeline: View {
     let day: BreakHistoryDay
 
-    private let timelineHours = [6, 9, 12, 15, 18, 21, 24]
-    private let horizontalInset: CGFloat = 14
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.sm) {
             HStack(alignment: .firstTextBaseline) {
                 Text(
                     day.date,
@@ -359,83 +367,51 @@ private struct DayBreakTimeline: View {
                         .month(.abbreviated)
                         .day()
                 )
-                .font(.subheadline.weight(.semibold))
+                .font(EyeBreakDesign.Typography.metadata)
+                .foregroundStyle(EyeBreakDesign.textPrimary)
 
                 Spacer()
 
                 Text(breakCountDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(EyeBreakDesign.Typography.metadata)
+                    .foregroundStyle(EyeBreakDesign.textSecondary)
             }
-
-            GeometryReader { geometry in
-                let lineY: CGFloat = 16
-
-                ZStack(alignment: .topLeading) {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.28))
-                        .frame(
-                            width: max(
-                                0,
-                                geometry.size.width - (horizontalInset * 2)
-                            ),
-                            height: 1
-                        )
-                        .position(x: geometry.size.width / 2, y: lineY)
-
-                    ForEach(timelineHours, id: \.self) { hour in
-                        let x = position(
-                            forHour: Double(hour),
-                            width: geometry.size.width
-                        )
-
-                        Rectangle()
-                            .fill(Color.secondary.opacity(0.32))
-                            .frame(width: 1, height: 9)
-                            .position(x: x, y: lineY)
-
-                        Text(String(format: "%02d:00", hour))
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .position(x: x, y: 40)
-                    }
-
-                    ForEach(
-                        Array(day.entries.enumerated()),
-                        id: \.offset
-                    ) { _, entry in
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(color(for: entry.outcome))
-                            .frame(width: 3, height: 23)
-                            .position(
-                                x: position(
-                                    for: entry.time,
-                                    width: geometry.size.width
-                                ),
-                                y: lineY
-                            )
-                            .help(entryDescription(entry))
-                            .accessibilityLabel(entryDescription(entry))
-                    }
-                }
-            }
-            .frame(height: 52)
 
             if day.entries.isEmpty {
                 Text("No timestamp details were recorded for this day.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(EyeBreakDesign.Typography.metadata)
+                    .foregroundStyle(EyeBreakDesign.textSecondary)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.sm) {
+                        ForEach(Array(day.entries.enumerated()), id: \.offset) { _, entry in
+                            HStack(spacing: EyeBreakDesign.Spacing.sm) {
+                                Text(entry.time, format: .dateTime.hour().minute())
+                                    .monospacedDigit()
+                                    .foregroundStyle(EyeBreakDesign.textSecondary)
+                                    .frame(width: 72, alignment: .leading)
+
+                                Circle()
+                                    .fill(color(for: entry.outcome))
+                                    .frame(width: 4, height: 4)
+
+                                Text(entry.outcome == .completed ? "Completed" : "Skipped")
+                                    .foregroundStyle(color(for: entry.outcome))
+
+                                Spacer(minLength: 0)
+                            }
+                            .font(EyeBreakDesign.Typography.metadata)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(entryDescription(entry))
+                        }
+                    }
+                    .padding(.vertical, EyeBreakDesign.Spacing.xxs)
+                }
+                .scrollIndicators(.hidden)
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.secondary.opacity(0.07))
-        )
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(
-            Text("Break timeline from 6 AM to midnight")
-        )
+        .accessibilityLabel(Text("Break timeline"))
     }
 
     private var breakCountDescription: String {
@@ -443,31 +419,12 @@ private struct DayBreakTimeline: View {
         return "\(count) \(count == 1 ? "break" : "breaks")"
     }
 
-    private func position(for date: Date, width: CGFloat) -> CGFloat {
-        let components = Calendar.autoupdatingCurrent.dateComponents(
-            [.hour, .minute, .second],
-            from: date
-        )
-        let hour = Double(components.hour ?? 0)
-            + (Double(components.minute ?? 0) / 60)
-            + (Double(components.second ?? 0) / 3_600)
-
-        return position(forHour: hour, width: width)
-    }
-
-    private func position(forHour hour: Double, width: CGFloat) -> CGFloat {
-        let clampedHour = min(max(hour, 6), 24)
-        let availableWidth = max(0, width - (horizontalInset * 2))
-        let progress = CGFloat((clampedHour - 6) / 18)
-        return horizontalInset + (availableWidth * progress)
-    }
-
     private func color(for outcome: BreakOutcome) -> Color {
         switch outcome {
         case .completed:
-            return .accentColor
+            return EyeBreakDesign.textPrimary
         case .skipped:
-            return .secondary.opacity(0.65)
+            return EyeBreakDesign.textSecondary
         }
     }
 

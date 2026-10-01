@@ -26,7 +26,7 @@ DEFAULT_SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 SDK_PATH="${SDKROOT:-$DEFAULT_SDK_PATH}"
 ARCHITECTURE="$(uname -m)"
 SOURCE_FILES=("$SCRIPT_DIR"/Sources/*.swift)
-WIDGET_SOURCE_FILES=("$SCRIPT_DIR"/Widget/*.swift)
+WIDGET_SOURCE_FILES=("$SCRIPT_DIR/Sources/DesignSystem.swift" "$SCRIPT_DIR"/Widget/*.swift)
 
 # Some Command Line Tools installs retain a stable macOS 15 SDK alongside a
 # newer preview SDK. The stable SDK covers every API used here and can avoid a

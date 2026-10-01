@@ -315,6 +315,7 @@ enum MaskTransitionStyle {
 
 extension HUDView {
     func startPixelEntranceIfNeeded() {
+        guard !usesReducedMotion else { return }
         guard case .pixels = state.entranceStyle else { return }
 
         pixelEntranceTask?.cancel()
@@ -368,24 +369,33 @@ extension HUDView {
         UInt64(max(0, duration) * 1_000_000_000)
     }
 
+    @ViewBuilder
     var animatedCard: some View {
-        transitionCard
-            .scaleEffect(
-                x: exitAnimationValues.scaleX,
-                y: exitAnimationValues.scaleY,
-                anchor: .top
-            )
-            .rotationEffect(
-                .degrees(exitAnimationValues.rotation),
-                anchor: .top
-            )
-            .offset(y: exitAnimationValues.offsetY)
-            .blur(radius: exitAnimationValues.blurRadius)
-            .opacity(exitAnimationValues.opacity)
-            .onChange(of: state.isDismissing) { _, isDismissing in
-                guard isDismissing else { return }
-                animateExit()
-            }
+        if usesReducedMotion {
+            shapedCard
+                .offset(y: state.entranceStyle.restingOffsetY)
+                .opacity(entranceTrigger > 0 && !state.isDismissing ? 1 : 0)
+                .animation(.easeInOut(duration: 0.2), value: entranceTrigger)
+                .animation(.easeInOut(duration: 0.2), value: state.isDismissing)
+        } else {
+            transitionCard
+                .scaleEffect(
+                    x: exitAnimationValues.scaleX,
+                    y: exitAnimationValues.scaleY,
+                    anchor: .top
+                )
+                .rotationEffect(
+                    .degrees(exitAnimationValues.rotation),
+                    anchor: .top
+                )
+                .offset(y: exitAnimationValues.offsetY)
+                .blur(radius: exitAnimationValues.blurRadius)
+                .opacity(exitAnimationValues.opacity)
+                .onChange(of: state.isDismissing) { _, isDismissing in
+                    guard isDismissing else { return }
+                    animateExit()
+                }
+        }
     }
 
     @ViewBuilder
@@ -798,31 +808,7 @@ extension HUDView {
     }
 
     private var shapedCard: some View {
-        let silhouette = cardSilhouette
-        let glowColor = state.theme.accent
-        let glowOpacity = state.isNightMode
-            ? 0.08
-            : (glowIsPulsing ? 0.4 : 0.25)
-        let isGlowAnimating = glowIsPulsing && !state.isNightMode
-
-        return card
-            .clipShape(silhouette)
-            .overlay {
-                silhouette
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            }
-            .background {
-                silhouette
-                    .fill(glowColor)
-                    .opacity(glowOpacity)
-                    .blur(radius: 30)
-                    .scaleEffect(1.05)
-                    .animation(
-                        .easeInOut(duration: 1.5)
-                            .repeatForever(autoreverses: true),
-                        value: isGlowAnimating
-                    )
-            }
+        card.clipShape(cardSilhouette)
     }
 
     @ViewBuilder
@@ -853,12 +839,6 @@ extension HUDView {
 
             cardForeground
                 .clipShape(silhouette)
-                .opacity(contentOpacity)
-                .animation(contentAnimation, value: contentOpacity)
-        }
-        .overlay {
-            silhouette
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 .opacity(contentOpacity)
                 .animation(contentAnimation, value: contentOpacity)
         }
@@ -1008,15 +988,18 @@ extension HUDView {
             ) { content, values in
                 content
                     .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
+                        x: 1 + (values.scaleX - 1) * 0.24,
+                        y: 1 + (values.scaleY - 1) * 0.24,
                         anchor: .top
                     )
                     .rotationEffect(
-                        .degrees(values.rotation),
+                        .degrees(values.rotation * 0.3),
                         anchor: .top
                     )
-                    .offset(x: values.offsetX, y: values.offsetY)
+                    .offset(
+                        x: values.offsetX * 0.3,
+                        y: 8 + (values.offsetY - 8) * 0.3
+                    )
                     .opacity(values.opacity)
             } keyframes: { _ in
                 KeyframeTrack(\.scaleX) {
@@ -1147,12 +1130,15 @@ extension HUDView {
             ) { content, values in
                 content
                     .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
+                        x: 1 + (values.scaleX - 1) * 0.24,
+                        y: 1 + (values.scaleY - 1) * 0.24,
                         anchor: .top
                     )
-                    .rotationEffect(.degrees(values.rotation), anchor: .top)
-                    .offset(x: values.offsetX, y: values.offsetY)
+                    .rotationEffect(.degrees(values.rotation * 0.3), anchor: .top)
+                    .offset(
+                        x: values.offsetX * 0.3,
+                        y: 8 + (values.offsetY - 8) * 0.3
+                    )
                     .opacity(values.opacity)
             } keyframes: { _ in
                 KeyframeTrack(\.scaleY) {
@@ -1209,15 +1195,18 @@ extension HUDView {
             ) { content, values in
                 content
                     .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
+                        x: 1 + (values.scaleX - 1) * 0.24,
+                        y: 1 + (values.scaleY - 1) * 0.24,
                         anchor: .topLeading
                     )
                     .rotationEffect(
-                        .degrees(values.rotation),
+                        .degrees(values.rotation * 0.3),
                         anchor: .topLeading
                     )
-                    .offset(x: values.offsetX, y: values.offsetY)
+                    .offset(
+                        x: values.offsetX * 0.3,
+                        y: 8 + (values.offsetY - 8) * 0.3
+                    )
                     .opacity(values.opacity)
             } keyframes: { _ in
                 KeyframeTrack(\.offsetX) {
@@ -1252,12 +1241,15 @@ extension HUDView {
             ) { content, values in
                 content
                     .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
+                        x: 1 + (values.scaleX - 1) * 0.24,
+                        y: 1 + (values.scaleY - 1) * 0.24,
                         anchor: .top
                     )
-                    .rotationEffect(.degrees(values.rotation), anchor: .top)
-                    .offset(x: values.offsetX, y: values.offsetY)
+                    .rotationEffect(.degrees(values.rotation * 0.3), anchor: .top)
+                    .offset(
+                        x: values.offsetX * 0.3,
+                        y: 8 + (values.offsetY - 8) * 0.3
+                    )
                     .opacity(values.opacity)
             } keyframes: { _ in
                 KeyframeTrack(\.scaleX) {
@@ -1360,12 +1352,15 @@ extension HUDView {
             ) { content, values in
                 content
                     .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
+                        x: 1 + (values.scaleX - 1) * 0.24,
+                        y: 1 + (values.scaleY - 1) * 0.24,
                         anchor: .center
                     )
-                    .rotationEffect(.degrees(values.rotation))
-                    .offset(x: values.offsetX, y: values.offsetY)
+                    .rotationEffect(.degrees(values.rotation * 0.3))
+                    .offset(
+                        x: values.offsetX * 0.3,
+                        y: 8 + (values.offsetY - 8) * 0.3
+                    )
                     .opacity(values.opacity)
             } keyframes: { _ in
                 KeyframeTrack(\.scaleX) {
@@ -1422,12 +1417,15 @@ extension HUDView {
             ) { content, values in
                 content
                     .scaleEffect(
-                        x: values.scaleX,
-                        y: values.scaleY,
+                        x: 1 + (values.scaleX - 1) * 0.24,
+                        y: 1 + (values.scaleY - 1) * 0.24,
                         anchor: .center
                     )
-                    .rotationEffect(.degrees(values.rotation))
-                    .offset(x: values.offsetX, y: values.offsetY)
+                    .rotationEffect(.degrees(values.rotation * 0.3))
+                    .offset(
+                        x: values.offsetX * 0.3,
+                        y: 8 + (values.offsetY - 8) * 0.3
+                    )
                     .opacity(values.opacity)
             } keyframes: { _ in
                 KeyframeTrack(\.offsetX) {

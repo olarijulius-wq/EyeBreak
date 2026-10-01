@@ -72,6 +72,8 @@ final class SettingsWindowController: NSWindowController {
         settingsWindow.contentMaxSize = Self.contentSize
         settingsWindow.tabbingMode = .disallowed
         settingsWindow.animationBehavior = .documentWindow
+        settingsWindow.appearance = NSAppearance(named: .darkAqua)
+        settingsWindow.backgroundColor = NSColor(EyeBreakDesign.base)
 
         super.init(window: settingsWindow)
         shouldCascadeWindows = false
@@ -158,21 +160,25 @@ private struct SettingsView: View {
             timingTab
                 .tabItem {
                     Label("Timing", systemImage: "clock")
+                        .fontWeight(.light)
                 }
 
             appearanceTab
                 .tabItem {
                     Label("Appearance", systemImage: "paintpalette")
+                        .fontWeight(.light)
                 }
 
             behaviourTab
                 .tabItem {
                     Label("Behaviour", systemImage: "switch.2")
+                        .fontWeight(.light)
                 }
 
             generalTab
                 .tabItem {
                     Label("General", systemImage: "gearshape")
+                        .fontWeight(.light)
                 }
         }
         .padding(20)
@@ -180,6 +186,9 @@ private struct SettingsView: View {
             width: SettingsWindowController.contentSize.width,
             height: SettingsWindowController.contentSize.height
         )
+        .background(EyeBreakDesign.base)
+        .tint(EyeBreakDesign.amber)
+        .preferredColorScheme(.dark)
         .onAppear {
             viewModel.refreshLaunchAtLogin()
 
@@ -281,24 +290,16 @@ private struct SettingsView: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Live preview")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.xs) {
+                    HStack {
+                        MicroLabel("Live preview")
+                        Spacer()
+                        Text(previewTheme.displayName)
+                            .font(EyeBreakDesign.Typography.metadata)
+                            .foregroundStyle(EyeBreakDesign.textSecondary)
+                    }
 
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(previewTheme.background)
-                        .frame(height: 84)
-                        .overlay {
-                            Text(previewTheme.displayName)
-                                .font(.headline)
-                                .foregroundStyle(.white)
-                                .shadow(radius: 3)
-                        }
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(.white.opacity(0.18), lineWidth: 1)
-                        }
+                    themePreview
                 }
                 .padding(.vertical, 4)
 
@@ -362,6 +363,63 @@ private struct SettingsView: View {
 
     private var previewTheme: Theme {
         ThemeSelection.resolve(rawValue: selectedThemeRawValue)
+    }
+
+    private var previewIsNightMode: Bool {
+        let hour = Calendar.current.component(.hour, from: Date())
+        return nightModeEnabled && (hour >= 23 || hour < 6)
+    }
+
+    private var themePreview: some View {
+        ZStack {
+            AtmosphereBackground(
+                palette: (previewIsNightMode ? Theme.mono : previewTheme)
+                    .atmosphere(isNightMode: previewIsNightMode)
+            )
+
+            HStack(spacing: EyeBreakDesign.Spacing.lg) {
+                VStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.xs) {
+                    Text("Eye break · 20 sec")
+                        .font(EyeBreakDesign.Typography.metadata)
+                        .foregroundStyle(EyeBreakDesign.textSecondary)
+
+                    Text("LOOK FAR\nAWAY")
+                        .font(.system(size: 27, weight: .light))
+                        .tracking(-0.8)
+                        .lineSpacing(-3)
+                        .foregroundStyle(EyeBreakDesign.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if focusExerciseEnabled {
+                        HStack(spacing: EyeBreakDesign.Spacing.md) {
+                            previewPhase("Far", isActive: true)
+                            previewPhase("Near", isActive: false)
+                            previewPhase("Far", isActive: false)
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                GlowRing(progress: 1, diameter: 52) {
+                    Text("20")
+                        .font(.system(size: 21, weight: .light))
+                        .foregroundStyle(EyeBreakDesign.textPrimary)
+                }
+                .accessibilityLabel("20 seconds remaining")
+            }
+            .padding(EyeBreakDesign.Spacing.lg)
+        }
+        .frame(height: 156)
+        .clipShape(RoundedRectangle(cornerRadius: EyeBreakDesign.Radius.card, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func previewPhase(_ title: String, isActive: Bool) -> some View {
+        Text(title)
+            .font(EyeBreakDesign.Typography.metadata)
+            .foregroundStyle(isActive ? EyeBreakDesign.textPrimary : EyeBreakDesign.textSecondary)
+            .background(GlowSelection(isActive: isActive))
     }
 
     private var launchAtLoginBinding: Binding<Bool> {

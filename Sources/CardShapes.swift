@@ -11,29 +11,29 @@ enum CardShape: CaseIterable {
     var shape: AnyShape {
         switch self {
         case .capsule:
-            return AnyShape(Capsule(style: .continuous))
+            return AnyShape(HeightScaledRoundedRectangle(radiusRatio: 0.28))
         case .squircle:
             return AnyShape(
-                HeightScaledRoundedRectangle(radiusRatio: 30 / 96)
+                HeightScaledRoundedRectangle(radiusRatio: 0.18)
             )
         case .pill:
-            return AnyShape(HalfHeightRoundedRectangle())
+            return AnyShape(SoftPillShape())
         case .blob:
             return AnyShape(
                 HeightScaledAsymmetricRoundedForm(
-                    topLeftRadiusRatio: 44 / 96,
-                    topRightRadiusRatio: 18 / 96,
-                    bottomRightRadiusRatio: 38 / 96,
-                    bottomLeftRadiusRatio: 24 / 96
+                    topLeftRadiusRatio: 0.26,
+                    topRightRadiusRatio: 0.18,
+                    bottomRightRadiusRatio: 0.24,
+                    bottomLeftRadiusRatio: 0.20
                 )
             )
         case .tag:
             return AnyShape(
                 HeightScaledAsymmetricRoundedForm(
-                    topLeftRadiusRatio: 30 / 96,
-                    topRightRadiusRatio: 30 / 96,
-                    bottomRightRadiusRatio: 30 / 96,
-                    bottomLeftRadiusRatio: 0
+                    topLeftRadiusRatio: 0.22,
+                    topRightRadiusRatio: 0.22,
+                    bottomRightRadiusRatio: 0.22,
+                    bottomLeftRadiusRatio: 0.14
                 )
             )
         case .leaf:
@@ -71,11 +71,11 @@ private struct HeightScaledAsymmetricRoundedForm: Shape {
     }
 }
 
-private struct HalfHeightRoundedRectangle: Shape {
+private struct SoftPillShape: Shape {
     func path(in rect: CGRect) -> Path {
         RoundedRectangle(
-            cornerRadius: rect.height / 2,
-            style: .circular
+            cornerRadius: rect.height * 0.32,
+            style: .continuous
         )
         .path(in: rect)
     }
@@ -83,12 +83,13 @@ private struct HalfHeightRoundedRectangle: Shape {
 
 private struct LeafShape: Shape {
     func path(in rect: CGRect) -> Path {
-        let fullRadius = min(rect.width, rect.height)
+        let fullRadius = min(rect.width, rect.height) * 0.32
+        let softTipRadius = min(rect.width, rect.height) * 0.14
 
         return AsymmetricRoundedForm(
-            topLeftRadius: 0,
+            topLeftRadius: softTipRadius,
             topRightRadius: fullRadius,
-            bottomRightRadius: 0,
+            bottomRightRadius: softTipRadius,
             bottomLeftRadius: fullRadius
         )
         .path(in: rect)
@@ -103,42 +104,14 @@ private struct AsymmetricRoundedForm: Shape {
 
     func path(in rect: CGRect) -> Path {
         let radii = fittedRadii(in: rect)
-        var path = Path()
-
-        path.move(
-            to: CGPoint(x: rect.minX + radii.topLeft, y: rect.minY)
+        return UnevenRoundedRectangle(
+            topLeadingRadius: radii.topLeft,
+            bottomLeadingRadius: radii.bottomLeft,
+            bottomTrailingRadius: radii.bottomRight,
+            topTrailingRadius: radii.topRight,
+            style: .continuous
         )
-        path.addLine(
-            to: CGPoint(x: rect.maxX - radii.topRight, y: rect.minY)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.minY + radii.topRight),
-            control: CGPoint(x: rect.maxX, y: rect.minY)
-        )
-        path.addLine(
-            to: CGPoint(x: rect.maxX, y: rect.maxY - radii.bottomRight)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - radii.bottomRight, y: rect.maxY),
-            control: CGPoint(x: rect.maxX, y: rect.maxY)
-        )
-        path.addLine(
-            to: CGPoint(x: rect.minX + radii.bottomLeft, y: rect.maxY)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.maxY - radii.bottomLeft),
-            control: CGPoint(x: rect.minX, y: rect.maxY)
-        )
-        path.addLine(
-            to: CGPoint(x: rect.minX, y: rect.minY + radii.topLeft)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + radii.topLeft, y: rect.minY),
-            control: CGPoint(x: rect.minX, y: rect.minY)
-        )
-        path.closeSubpath()
-
-        return path
+        .path(in: rect)
     }
 
     private func fittedRadii(in rect: CGRect) -> (

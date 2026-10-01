@@ -23,6 +23,8 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         onboardingWindow.contentMaxSize = Self.contentSize
         onboardingWindow.tabbingMode = .disallowed
         onboardingWindow.animationBehavior = .documentWindow
+        onboardingWindow.appearance = NSAppearance(named: .darkAqua)
+        onboardingWindow.backgroundColor = NSColor(EyeBreakDesign.base)
 
         super.init(window: onboardingWindow)
         shouldCascadeWindows = false
@@ -75,86 +77,105 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
 private struct OnboardingView: View {
     private static let pageCount = 3
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = 0
 
     let onGetStarted: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            pageContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack {
+            AtmosphereBackground(palette: .ember)
 
-            HStack(spacing: 8) {
-                ForEach(0..<Self.pageCount, id: \.self) { index in
-                    Circle()
-                        .fill(index == page ? Color.accentColor : .secondary.opacity(0.3))
-                        .frame(width: 7, height: 7)
-                }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Page \(page + 1) of \(Self.pageCount)")
-            .padding(.bottom, 22)
+            VStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.lg) {
+                pageContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .id(page)
+                    .transition(.opacity)
 
-            Divider()
+                HStack(spacing: EyeBreakDesign.Spacing.lg) {
+                    HStack(spacing: EyeBreakDesign.Spacing.md) {
+                        ForEach(0..<Self.pageCount, id: \.self) { index in
+                            VStack(spacing: EyeBreakDesign.Spacing.xs) {
+                                Text("\(index + 1)")
+                                    .font(EyeBreakDesign.Typography.micro)
+                                    .foregroundStyle(index == page ? EyeBreakDesign.textPrimary : EyeBreakDesign.textSecondary)
 
-            HStack {
-                if page > 0 {
-                    Button("Back") {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            page -= 1
+                                Capsule()
+                                    .fill(index == page ? EyeBreakDesign.textPrimary : .clear)
+                                    .frame(width: 14, height: 1)
+                            }
                         }
                     }
-                }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Page \(page + 1) of \(Self.pageCount)")
 
-                Spacer()
+                    Spacer()
 
-                Button(page == Self.pageCount - 1 ? "Get started" : "Continue") {
-                    if page == Self.pageCount - 1 {
-                        onGetStarted()
-                    } else {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            page += 1
+                    if page > 0 {
+                        Button("Back") {
+                            withAnimation(.easeInOut(duration: reduceMotion ? 0.15 : 0.3)) {
+                                page -= 1
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .font(EyeBreakDesign.Typography.metadata)
+                        .foregroundStyle(EyeBreakDesign.textSecondary)
                     }
+
+                    Button {
+                        if page == Self.pageCount - 1 {
+                            onGetStarted()
+                        } else {
+                            withAnimation(.easeInOut(duration: reduceMotion ? 0.15 : 0.3)) {
+                                page += 1
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: EyeBreakDesign.Spacing.md) {
+                            Text(page == Self.pageCount - 1 ? "Get started" : "Continue")
+                                .font(EyeBreakDesign.Typography.metadata)
+
+                            GlowRing(diameter: 52) {
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 19, weight: .light))
+                            }
+                        }
+                        .foregroundStyle(EyeBreakDesign.textPrimary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityLabel(page == Self.pageCount - 1 ? "Get started" : "Continue")
                 }
-                .keyboardShortcut(.defaultAction)
             }
-            .padding(20)
+            .padding(EyeBreakDesign.Spacing.xl)
         }
         .frame(
             width: OnboardingWindowController.contentSize.width,
             height: OnboardingWindowController.contentSize.height
         )
+        .preferredColorScheme(.dark)
     }
 
     @ViewBuilder
     private var pageContent: some View {
         switch page {
         case 0:
-            VStack(spacing: 16) {
-                Image(nsImage: NSApp.applicationIconImage)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 84, height: 84)
-                    .accessibilityHidden(true)
-
-                Text("What it does")
-                    .font(.title2.weight(.semibold))
-
-                VStack(spacing: 12) {
-                    Text("EyeBreak follows the 20-20-20 rule: every 20 minutes, look at something 20 feet away for 20 seconds.")
-                    Text("Those short pauses give your eyes a chance to relax without pulling you out of your work.")
-                }
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 410)
-            }
-            .padding(32)
+            onboardingPage(
+                symbol: "eye",
+                metadata: "EyeBreak · The 20-20-20 rule",
+                title: "LOOK FAR\nAWAY",
+                paragraphs: [
+                    "EyeBreak follows the 20-20-20 rule: every 20 minutes, look at something 20 feet away for 20 seconds.",
+                    "Those short pauses give your eyes a chance to relax without pulling you out of your work."
+                ]
+            )
 
         case 1:
             onboardingPage(
                 symbol: "menubar.rectangle",
-                title: "How it works",
+                metadata: "A small pause, right on time",
+                title: "A MOMENT\nTO RESET",
                 paragraphs: [
                     "When it’s time for a break, a small card appears at the top of your screen.",
                     "Click the card to dismiss it at any time. Everything is configurable in Settings."
@@ -163,8 +184,9 @@ private struct OnboardingView: View {
 
         default:
             onboardingPage(
-                symbol: "hand.raised.fill",
-                title: "Permissions",
+                symbol: "hand.raised",
+                metadata: "Permissions · Always your choice",
+                title: "YOUR MAC.\nYOUR CHOICE.",
                 paragraphs: [
                     "Camera attention, meeting detection, and the Escape shortcut each need a separate macOS permission. All three are off by default, and nothing is requested during setup.",
                     "If you enable one later, its work stays on your Mac. No data leaves your machine."
@@ -175,27 +197,40 @@ private struct OnboardingView: View {
 
     private func onboardingPage(
         symbol: String,
+        metadata: String,
         title: String,
         paragraphs: [String]
     ) -> some View {
-        VStack(spacing: 20) {
-            Image(systemName: symbol)
-                .font(.system(size: 54, weight: .medium))
-                .foregroundStyle(Color.accentColor)
-                .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.md) {
+            HStack(spacing: EyeBreakDesign.Spacing.xs) {
+                Image(systemName: symbol)
+                    .font(.system(size: 15, weight: .ultraLight))
+                    .accessibilityHidden(true)
+
+                Text(metadata)
+                    .font(EyeBreakDesign.Typography.metadata)
+            }
+            .foregroundStyle(EyeBreakDesign.textSecondary)
 
             Text(title)
-                .font(.title2.weight(.semibold))
+                .font(EyeBreakDesign.Typography.display)
+                .tracking(EyeBreakDesign.Typography.displayTracking)
+                .lineSpacing(-5)
+                .foregroundStyle(EyeBreakDesign.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
 
-            VStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.xs) {
                 ForEach(paragraphs, id: \.self) { paragraph in
                     Text(paragraph)
                 }
             }
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: 430)
+            .font(.system(size: 13, weight: .regular))
+            .foregroundStyle(EyeBreakDesign.textSecondary)
+            .lineSpacing(2)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 440, alignment: .leading)
         }
-        .padding(40)
     }
 }

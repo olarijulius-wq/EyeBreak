@@ -185,37 +185,26 @@ private struct EyeBreakWidgetView: View {
                 smallContent
             }
         }
+        .foregroundStyle(EyeBreakDesign.textPrimary)
+        .preferredColorScheme(.dark)
         .containerBackground(for: .widget) {
-            LinearGradient(
-                colors: [
-                    Color.accentColor.opacity(0.18),
-                    Color.accentColor.opacity(0.04)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            AtmosphereBackground(palette: .ember, animated: false)
         }
     }
 
     private var smallContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("EYEBREAK")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+            MicroLabel("TODAY")
 
-            Spacer(minLength: 8)
+            Spacer(minLength: EyeBreakDesign.Spacing.xxs)
 
-            Text("\(entry.todayCompleted)")
-                .font(.system(size: 48, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .minimumScaleFactor(0.65)
-                .lineLimit(1)
+            completedCount(size: 56)
 
-            Text("completed today")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text("Completed breaks")
+                .font(EyeBreakDesign.Typography.metadata)
+                .foregroundStyle(EyeBreakDesign.textSecondary)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: EyeBreakDesign.Spacing.xs)
 
             streakLabel
         }
@@ -223,35 +212,25 @@ private struct EyeBreakWidgetView: View {
     }
 
     private var mediumContent: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: EyeBreakDesign.Spacing.lg) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("EYEBREAK")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                MicroLabel("TODAY")
 
-                Spacer(minLength: 4)
+                Spacer(minLength: EyeBreakDesign.Spacing.xxs)
 
-                Text("\(entry.todayCompleted)")
-                    .font(.system(size: 44, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.65)
-                    .lineLimit(1)
+                completedCount(size: 56)
 
-                Text("completed today")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Completed breaks")
+                    .font(EyeBreakDesign.Typography.metadata)
+                    .foregroundStyle(EyeBreakDesign.textSecondary)
 
-                Spacer(minLength: 6)
+                Spacer(minLength: EyeBreakDesign.Spacing.xs)
                 streakLabel
             }
-            .frame(width: 112, alignment: .leading)
+            .frame(width: 108, alignment: .leading)
 
-            Divider()
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text("LAST 7 DAYS")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.sm) {
+                MicroLabel("LAST 7 DAYS")
 
                 WeeklyBreakBars(days: entry.lastSevenDays)
             }
@@ -260,15 +239,25 @@ private struct EyeBreakWidgetView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func completedCount(size: CGFloat) -> some View {
+        Text("\(entry.todayCompleted)")
+            .font(.system(size: size, weight: .light))
+            .tracking(-1.8)
+            .monospacedDigit()
+            .minimumScaleFactor(0.65)
+            .lineLimit(1)
+            .accessibilityLabel("\(entry.todayCompleted) completed breaks today")
+    }
+
     private var streakLabel: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "flame.fill")
-            Text("\(entry.currentStreak)-day streak")
+        HStack(alignment: .firstTextBaseline, spacing: EyeBreakDesign.Spacing.xs) {
+            MicroLabel("STREAK")
+            Text("\(entry.currentStreak) \(entry.currentStreak == 1 ? "day" : "days")")
+                .font(EyeBreakDesign.Typography.metadata)
+                .foregroundStyle(EyeBreakDesign.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
-        .font(.footnote.weight(.semibold))
-        .foregroundStyle(Color.accentColor)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Current streak, \(entry.currentStreak) days")
     }
@@ -282,51 +271,18 @@ private struct WeeklyBreakBars: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            let availableHeight = max(8, geometry.size.height - 18)
-
-            HStack(alignment: .bottom, spacing: 6) {
-                ForEach(days) { day in
-                    VStack(spacing: 4) {
-                        ZStack(alignment: .bottom) {
-                            Capsule()
-                                .fill(Color.secondary.opacity(0.12))
-
-                            if day.completed > 0 {
-                                Capsule()
-                                    .fill(Color.accentColor)
-                                    .frame(
-                                        height: filledHeight(
-                                            for: day.completed,
-                                            availableHeight: availableHeight
-                                        )
-                                    )
-                            }
-                        }
-                        .frame(width: 11, height: availableHeight)
-
-                        Text(day.date, format: .dateTime.weekday(.narrow))
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(
-                        day.date.formatted(date: .abbreviated, time: .omitted)
-                    )
-                    .accessibilityValue("\(day.completed) completed breaks")
-                }
+        DayStrip(
+            labels: days.map { $0.date.formatted(.dateTime.weekday(.narrow)) },
+            selectedIndex: days.indices.last,
+            values: days.map { Double($0.completed) / Double(maximumCompleted) },
+            accessibilityLabels: days.map { day in
+                let date = day.date.formatted(date: .abbreviated, time: .omitted)
+                return "\(date), \(day.completed) completed breaks"
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        }
-    }
-
-    private func filledHeight(
-        for completed: Int,
-        availableHeight: CGFloat
-    ) -> CGFloat {
-        let fraction = CGFloat(completed) / CGFloat(maximumCompleted)
-        return min(availableHeight, max(4, availableHeight * fraction))
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Completed breaks in the last seven days")
     }
 }
 

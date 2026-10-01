@@ -245,11 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = item.button {
-            button.image = NSImage(
-                systemSymbolName: "eye",
-                accessibilityDescription: "EyeBreak"
-            )
-            button.image?.isTemplate = true
+            setStatusItemImage(named: "eye", on: button)
             button.imagePosition = .imageOnly
             button.toolTip = "EyeBreak"
         }
@@ -599,6 +595,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let image = NSImage(
             systemSymbolName: symbolName,
             accessibilityDescription: "EyeBreak"
+        )?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 16, weight: .light)
         )
         image?.isTemplate = true
         button.image = image

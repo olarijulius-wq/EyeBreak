@@ -10,33 +10,29 @@ enum CardSizeVariant: Equatable {
 }
 
 enum HUDLayout {
-    // The transparent margin keeps the blurred glow visible through the
-    // widest card's entrance stretch and a full 120-point downward drag.
-    static let panelSize = CGSize(width: 780, height: 344)
+    // Preserve the full drag envelope, hover tracking margin, and animated
+    // overshoot beneath the tallest card. Top origins still use the original
+    // notch (32 + 8pt) and non-notch (12pt) offsets.
+    static let panelSize = CGSize(width: 780, height: 464)
     static let minimumCardWidth: CGFloat = 360
     static let preferredStandardCardWidth: CGFloat = 460
     static let maximumCardWidth: CGFloat = 600
     static let wideCardWidth: CGFloat = 600
     static let compactCardWidth: CGFloat = 320
-    static let standardCardHeight: CGFloat = 56
-    static let wideCardHeight: CGFloat = 48
-    static let compactCardHeight: CGFloat = 72
+    static let standardCardHeight: CGFloat = 176
+    static let wideCardHeight: CGFloat = 164
+    static let compactCardHeight: CGFloat = 208
     static let notchedCardTopPadding: CGFloat = 32
     static let noNotchCardTopInset: CGFloat = 12
-    static let eyeIconFontSize: CGFloat = 20
-    static let eyeWidth: CGFloat = 24
-    static let titleFontSize: CGFloat = 14
-    static let subtitleFontSize: CGFloat = 11
-    static let titleSubtitleSpacing: CGFloat = 1
-    static let titleBadgeSpacing: CGFloat = 3
-    static let streakIndicatorSpacing: CGFloat = 3
-    static let streakIndicatorFontSize: CGFloat = 11
-    static let streakIconEstimatedWidth: CGFloat = 11
-    static let standardContentSpacing: CGFloat = 12
-    static let standardHorizontalContentPadding: CGFloat = 18
-    static let standardCountdownDiameter: CGFloat = 34
-    static let countdownStrokeWidth: CGFloat = 2.5
-    static let countdownNumberFontSize: CGFloat = 11
+    static let eyeIconFontSize: CGFloat = 12
+    static let eyeWidth: CGFloat = 16
+    static let titleFontSize: CGFloat = 40
+    static let subtitleFontSize: CGFloat = 12
+    static let standardContentSpacing: CGFloat = 16
+    static let standardHorizontalContentPadding: CGFloat = 24
+    static let standardCountdownDiameter: CGFloat = 56
+    static let countdownStrokeWidth: CGFloat = 1.5
+    static let countdownNumberFontSize: CGFloat = 24
 }
 
 enum FocusExercisePhase: CaseIterable, Equatable {
@@ -53,10 +49,6 @@ enum FocusExercisePhase: CaseIterable, Equatable {
         case .finalFar:
             return "Back to something far away"
         }
-    }
-
-    var accentSaturationScale: Double {
-        self == .near ? 0.6 : 1
     }
 }
 
@@ -163,15 +155,13 @@ final class HUDViewState: ObservableObject {
         let resolvedCurrentStreak = max(0, currentStreak)
         message = selectedMessage
         standardNaturalCardWidth = Self.naturalCardWidth(
-            for: selectedMessage,
-            currentStreak: resolvedCurrentStreak
+            for: selectedMessage
         )
         focusExerciseNaturalCardWidth = Self.naturalCardWidth(
             for: selectedMessage,
             additionalSubtitles: FocusExercisePhase.allCases.map {
                 $0.subtitle
-            },
-            currentStreak: resolvedCurrentStreak
+            }
         )
         self.currentStreak = resolvedCurrentStreak
         self.isNightMode = isNightMode
@@ -242,31 +232,15 @@ final class HUDViewState: ObservableObject {
 
     private static func naturalCardWidth(
         for message: (title: String, subtitle: String),
-        additionalSubtitles: [String] = [],
-        currentStreak: Int
+        additionalSubtitles: [String] = []
     ) -> CGFloat {
         let titleWidth = naturalTextWidth(
-            message.title,
+            message.title.uppercased(),
             size: HUDLayout.titleFontSize,
-            weight: .semibold
+            weight: .light,
+            tracking: EyeBreakDesign.Typography.displayTracking
         )
-        let streakWidth: CGFloat
-
-        if currentStreak >= 3 {
-            let countWidth = naturalTextWidth(
-                String(currentStreak),
-                size: HUDLayout.streakIndicatorFontSize,
-                weight: .medium
-            )
-            streakWidth = HUDLayout.titleBadgeSpacing
-                + HUDLayout.streakIconEstimatedWidth
-                + HUDLayout.streakIndicatorSpacing
-                + countWidth
-        } else {
-            streakWidth = 0
-        }
-
-        let subtitleWidth = ([message.subtitle] + additionalSubtitles)
+        let subtitleWidth = ([message.subtitle, heldSubtitle] + additionalSubtitles)
             .map {
                 naturalTextWidth(
                     $0,
@@ -275,41 +249,26 @@ final class HUDViewState: ObservableObject {
                 )
             }
             .max() ?? 0
-        let heldSubtitleWidth = naturalTextWidth(
-            heldSubtitle,
-            size: HUDLayout.subtitleFontSize,
-            weight: .regular
-        )
-        let textWidth = max(
-            titleWidth + streakWidth,
-            subtitleWidth,
-            heldSubtitleWidth
-        )
-        let hStackSpacing = HUDLayout.standardContentSpacing * 2
+        let titleRowWidth = titleWidth
+            + HUDLayout.standardCountdownDiameter
+            + HUDLayout.standardContentSpacing
 
         return ceil(
             (HUDLayout.standardHorizontalContentPadding * 2)
-                + HUDLayout.eyeWidth
-                + textWidth
-                + HUDLayout.standardCountdownDiameter
-                + hStackSpacing
+                + max(titleRowWidth, subtitleWidth)
         )
     }
 
     private static func naturalTextWidth(
         _ text: String,
         size: CGFloat,
-        weight: NSFont.Weight
+        weight: NSFont.Weight,
+        tracking: CGFloat = 0
     ) -> CGFloat {
-        let words = text.split(whereSeparator: { $0.isWhitespace })
-        let font = NSFont.systemFont(ofSize: size, weight: weight)
-        let wordWidth = words.reduce(CGFloat.zero) { total, word in
-            total + (String(word) as NSString).size(
-                withAttributes: [.font: font]
-            ).width
-        }
-        let interwordSpacing = CGFloat(max(0, words.count - 1)) * size * 0.24
-        return wordWidth + interwordSpacing
+        (text as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: size, weight: weight),
+            .kern: tracking
+        ]).width
     }
 
     var cardHeight: CGFloat {
@@ -433,16 +392,6 @@ final class HUDViewState: ObservableObject {
         }
 
         return focusExercisePhase?.subtitle ?? message.subtitle
-    }
-
-    var countdownAccent: Color {
-        guard let focusExercisePhase else {
-            return theme.countdownAccent(progress: progress)
-        }
-
-        return theme.accent(
-            saturationScale: focusExercisePhase.accentSaturationScale
-        )
     }
 
     var displayedSeconds: Int {

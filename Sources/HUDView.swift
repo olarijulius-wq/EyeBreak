@@ -62,12 +62,13 @@ enum CardHoverHysteresis {
 struct HUDView: View {
     private static let tiltEdgeInset: CGFloat = 8
 
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @State private var reducedMotionWasEnabled = false
     @ObservedObject var state: HUDViewState
     let onDismiss: () -> Void
     let onHoverChanged: (Bool) -> Void
 
     @State var entranceTrigger = 0
-    @State var glowIsPulsing = false
     @State private var fallbackBlinkScaleY: CGFloat = 1
     @State private var dragOffset: CGFloat = 0
     @State private var tiltX = 0.0
@@ -84,6 +85,12 @@ struct HUDView: View {
     )
     @State var exitAnimationValues = ExitAnimationValues()
 
+    // Once this presentation takes the fade path, keep it there. Inserting a
+    // keyframe/pixel entrance halfway through a break can hide assembled content.
+    var usesReducedMotion: Bool {
+        reduceMotion || reducedMotionWasEnabled
+    }
+
     var body: some View {
         hoverTrackingContainer
             .offset(y: hoverContainerOffsetY)
@@ -92,14 +99,21 @@ struct HUDView: View {
                 height: HUDLayout.panelSize.height,
                 alignment: .top
             )
+            .preferredColorScheme(.dark)
             .onAppear {
+                reducedMotionWasEnabled = reducedMotionWasEnabled || reduceMotion
                 DispatchQueue.main.async {
                     guard !state.isDismissing else { return }
                     state.markEntranceStarted()
                     entranceTrigger += 1
-                    glowIsPulsing = true
                     startPixelEntranceIfNeeded()
                 }
+            }
+            .onChange(of: reduceMotion) { _, isEnabled in
+                guard isEnabled else { return }
+                reducedMotionWasEnabled = true
+                pixelEntranceTask?.cancel()
+                pixelEntranceTask = nil
             }
             .onDisappear {
                 pixelEntranceTask?.cancel()
@@ -145,24 +159,24 @@ struct HUDView: View {
 
     private var hoverAnimatedCard: some View {
         animatedCard
-            .scaleEffect(isInFinalThreeSeconds ? 0.97 : 1)
-            .scaleEffect(isCardHovered ? 1.03 : 1)
+            .scaleEffect(isInFinalThreeSeconds && !usesReducedMotion ? 0.97 : 1)
+            .scaleEffect(isCardHovered && !usesReducedMotion ? 1.03 : 1)
             .animation(
-                .spring(response: 0.3, dampingFraction: 0.5),
+                usesReducedMotion ? nil : .easeOut(duration: 0.3),
                 value: isCardHovered
             )
             .rotation3DEffect(
-                .degrees(tiltX),
+                .degrees(usesReducedMotion ? 0 : tiltX),
                 axis: (x: 1, y: 0, z: 0),
                 perspective: 0.6
             )
             .rotation3DEffect(
-                .degrees(tiltY),
+                .degrees(usesReducedMotion ? 0 : tiltY),
                 axis: (x: 0, y: 1, z: 0),
                 perspective: 0.6
             )
             .animation(
-                .easeInOut(duration: 0.4),
+                usesReducedMotion ? nil : .easeInOut(duration: 0.4),
                 value: isInFinalThreeSeconds
             )
             .offset(y: dragOffset)
@@ -197,7 +211,7 @@ struct HUDView: View {
                 }
 
                 withAnimation(
-                    .spring(response: 0.4, dampingFraction: 0.55)
+                    usesReducedMotion ? nil : .spring(response: 0.4, dampingFraction: 0.55)
                 ) {
                     dragOffset = 0
                 }
@@ -333,224 +347,92 @@ struct HUDView: View {
     }
 
     private var cardBackground: some View {
-        let silhouette = cardSilhouette
-
-        return ZStack {
-            silhouette
-                .fill(driftingBackground)
-
-            silhouette
-                .fill(.ultraThinMaterial)
-                .opacity(0.16)
-        }
-    }
-
-    private var cardContent: some View {
-        HStack(spacing: HUDLayout.standardContentSpacing) {
-            animatedEye
-
-            VStack(
-                alignment: .leading,
-                spacing: HUDLayout.titleSubtitleSpacing
-            ) {
-                HStack(spacing: HUDLayout.titleBadgeSpacing) {
-                    cardTitle
-
-                    if state.currentStreak >= 3 {
-                        streakIndicator
-                    }
-                }
-
-                animatedSubtitle(
-                    size: HUDLayout.subtitleFontSize,
-                    lineLimit: state.cardSizeVariant == .compact ? 2 : 1,
-                    minimumScaleFactor: state.cardSizeVariant == .compact
-                        ? 0.82
-                        : 0.85
-                )
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
-
-            countdownRing
-        }
-        .padding(.horizontal, HUDLayout.standardHorizontalContentPadding)
-    }
-
-    @ViewBuilder
-    private var cardTitle: some View {
-        if state.cardSizeVariant == .compact {
-            rollingTitle(
-                state.message.title,
-                size: HUDLayout.titleFontSize,
-                weight: .semibold,
-                animatesEntranceByWord: false
-            )
-            .opacity(entranceTextIsVisible ? 1 : 0)
-            .offset(y: entranceTextIsVisible ? 0 : 6)
-            .animation(
-                textEntranceAnimation(delay: 0.25),
-                value: entranceTrigger
-            )
-        } else {
-            animatedWords(
-                state.message.title,
-                size: HUDLayout.titleFontSize,
-                weight: .semibold
-            )
-        }
-    }
-
-    private func animatedWords(
-        _ text: String,
-        size: CGFloat,
-        weight: Font.Weight,
-        startingAt startingIndex: Int = 0
-    ) -> some View {
-        rollingTitle(
-            text,
-            size: size,
-            weight: weight,
-            startingAt: startingIndex,
-            animatesEntranceByWord: true
+        AtmosphereBackground(
+            palette: state.theme.atmosphere(isNightMode: state.isNightMode)
         )
     }
 
-    private func rollingTitle(
-        _ text: String,
-        size: CGFloat,
-        weight: Font.Weight,
-        startingAt startingIndex: Int = 0,
-        animatesEntranceByWord: Bool
-    ) -> some View {
-        let lineHeight = ceil(size * 1.25)
+    private var cardContent: some View {
+        VStack(alignment: .leading, spacing: EyeBreakDesign.Spacing.xs) {
+            HStack(spacing: EyeBreakDesign.Spacing.xs) {
+                animatedEye
+                Text(state.isInformational
+                    ? "EyeBreak"
+                    : "Eye break · \(Int(state.duration)) sec")
+                    .font(EyeBreakDesign.Typography.metadata)
+                    .foregroundStyle(EyeBreakDesign.textSecondary)
+            }
 
-        return ZStack(alignment: .leading) {
-            rollingTitleLine(
-                text,
-                size: size,
-                weight: weight,
-                startingAt: startingIndex,
-                lineHeight: lineHeight,
-                isReplacement: false,
-                animatesEntranceByWord: animatesEntranceByWord
-            )
+            HStack(alignment: .center, spacing: EyeBreakDesign.Spacing.md) {
+                cardTitle
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
+                countdownRing
+            }
 
-            rollingTitleLine(
-                state.isHeld ? "Timer waiting" : "Still counting",
-                size: size,
-                weight: weight,
-                startingAt: startingIndex,
-                lineHeight: lineHeight,
-                isReplacement: true,
-                animatesEntranceByWord: animatesEntranceByWord
-            )
+            Text(state.displayedSubtitle)
+                .font(EyeBreakDesign.Typography.metadata)
+                .foregroundStyle(EyeBreakDesign.textSecondary)
+                .lineLimit(state.cardSizeVariant == .compact ? 2 : 1)
+                .minimumScaleFactor(0.9)
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.25), value: state.displayedSubtitle)
+
+            HStack(spacing: EyeBreakDesign.Spacing.sm) {
+                if state.showsFocusExercise {
+                    focusPhases
+                }
+                Spacer(minLength: 0)
+                if state.currentStreak >= 3 {
+                    streakIndicator
+                }
+            }
+            .frame(height: 24)
         }
-        .frame(height: lineHeight)
-        .clipped()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
+        .padding(.horizontal, HUDLayout.standardHorizontalContentPadding)
+        .padding(.vertical, EyeBreakDesign.Spacing.lg)
     }
 
-    private func rollingTitleLine(
-        _ text: String,
-        size: CGFloat,
-        weight: Font.Weight,
-        startingAt startingIndex: Int,
-        lineHeight: CGFloat,
-        isReplacement: Bool,
-        animatesEntranceByWord: Bool
-    ) -> some View {
-        let words = text.split(whereSeparator: { $0.isWhitespace })
+    private var cardTitle: some View {
+        ZStack(alignment: .leading) {
+            headline(state.message.title)
+                .opacity(isCardHovered ? 0 : 1)
+            headline(state.isHeld ? "Timer waiting" : "Still counting")
+                .opacity(isCardHovered ? 1 : 0)
+        }
+        .frame(height: state.cardSizeVariant == .compact ? 80 : 48, alignment: .leading)
+        .opacity(entranceTextIsVisible ? 1 : 0)
+        .animation(.easeInOut(duration: 0.2), value: isCardHovered)
+        .animation(textEntranceAnimation(delay: 0.15), value: entranceTrigger)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(state.message.title)
+    }
 
-        return HStack(spacing: size * 0.24) {
-            ForEach(Array(words.enumerated()), id: \.offset) { index, word in
-                let characterStart = words.prefix(index).reduce(0) {
-                    $0 + $1.count + 1
-                }
+    private func headline(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(EyeBreakDesign.Typography.display)
+            .tracking(EyeBreakDesign.Typography.displayTracking)
+            .lineSpacing(-3)
+            .foregroundStyle(EyeBreakDesign.textPrimary)
+            .lineLimit(state.cardSizeVariant == .compact ? 2 : 1)
+            .minimumScaleFactor(0.65)
+    }
 
-                HStack(spacing: 0) {
-                    ForEach(
-                        Array(String(word).enumerated()),
-                        id: \.offset
-                    ) { characterIndex, character in
-                        Text(String(character))
-                            .offset(
-                                y: rollingCharacterOffset(
-                                    lineHeight: lineHeight,
-                                    isReplacement: isReplacement
-                                )
-                            )
-                            .animation(
-                                .easeInOut(duration: 0.22)
-                                    .delay(
-                                        Double(
-                                            characterStart + characterIndex
-                                        ) * 0.02
-                                    ),
-                                value: isCardHovered
-                            )
-                    }
-                }
-                    .opacity(
-                        animatesEntranceByWord
-                            ? (entranceTextIsVisible ? 1 : 0)
-                            : 1
-                    )
-                    .offset(
-                        y: animatesEntranceByWord
-                            && !entranceTextIsVisible
-                            ? 6
-                            : 0
-                    )
-                    .animation(
-                        animatesEntranceByWord
-                            ? textEntranceAnimation(
-                                delay: 0.25
-                                    + Double(startingIndex + index) * 0.06
-                            )
-                            : nil,
-                        value: entranceTrigger
-                    )
+    private var focusPhases: some View {
+        HStack(spacing: EyeBreakDesign.Spacing.xs) {
+            ForEach(Array(FocusExercisePhase.allCases.enumerated()), id: \.offset) { _, phase in
+                Text(phase == .near ? "Near" : "Far")
+                    .font(EyeBreakDesign.Typography.metadata)
+                    .foregroundStyle(state.focusExercisePhase == phase
+                        ? EyeBreakDesign.textPrimary
+                        : EyeBreakDesign.textSecondary)
+                    .frame(width: 36, height: 24)
+                    .background(GlowSelection(isActive: state.focusExercisePhase == phase))
+                    .accessibilityLabel(phase.subtitle)
+                    .accessibilityAddTraits(state.focusExercisePhase == phase ? .isSelected : [])
             }
         }
-        .font(.system(size: size, weight: weight))
-        .foregroundStyle(state.theme.foreground)
-        .lineLimit(1)
-    }
-
-    private func rollingCharacterOffset(
-        lineHeight: CGFloat,
-        isReplacement: Bool
-    ) -> CGFloat {
-        if isReplacement {
-            return isCardHovered ? 0 : lineHeight
-        }
-
-        return isCardHovered ? -lineHeight : 0
-    }
-
-    private func animatedSubtitle(
-        size: CGFloat,
-        lineLimit: Int,
-        minimumScaleFactor: CGFloat
-    ) -> some View {
-        Text(state.displayedSubtitle)
-            .font(.system(size: size, weight: .regular))
-            .foregroundStyle(state.theme.foreground)
-            .lineLimit(lineLimit)
-            .minimumScaleFactor(minimumScaleFactor)
-            .contentTransition(.opacity)
-            .opacity(entranceTextIsVisible ? 1 : 0)
-            .offset(y: entranceTextIsVisible ? 0 : 6)
-            .animation(
-                textEntranceAnimation(delay: 0.25),
-                value: entranceTrigger
-            )
-            .animation(
-                .easeInOut(duration: 0.3),
-                value: state.displayedSubtitle
-            )
+        .animation(.easeInOut(duration: 0.3), value: state.focusExercisePhase)
     }
 
     private var entranceTextIsVisible: Bool {
@@ -579,20 +461,12 @@ struct HUDView: View {
     }
 
     private var streakIndicator: some View {
-        HStack(spacing: HUDLayout.streakIndicatorSpacing) {
-            Image(systemName: "flame.fill")
-            Text("\(state.currentStreak)")
-                .monospacedDigit()
-        }
-        .font(
-            .system(
-                size: HUDLayout.streakIndicatorFontSize,
-                weight: .medium
-            )
-        )
-        .foregroundStyle(state.theme.foreground.opacity(0.6))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(state.currentStreak) day streak")
+        Text("Streak \(state.currentStreak) days")
+            .font(EyeBreakDesign.Typography.metadata)
+            .foregroundStyle(EyeBreakDesign.textSecondary)
+            .monospacedDigit()
+            .lineLimit(1)
+            .accessibilityLabel("\(state.currentStreak) day streak")
     }
 
     var cardHeight: CGFloat {
@@ -603,24 +477,16 @@ struct HUDView: View {
         state.remainingSeconds < 3
     }
 
-    var driftingBackground: LinearGradient {
-        let elapsedProgress = 1 - state.progress
-        let angle = (Double.pi / 4)
-            + (elapsedProgress * 2 * Double.pi / 3)
-        let radius: CGFloat = 0.72
-        let xOffset = CGFloat(cos(angle)) * radius
-        let yOffset = CGFloat(sin(angle)) * radius
-
-        return state.theme.gradient(
-            startPoint: UnitPoint(
-                x: 0.5 - xOffset,
-                y: 0.5 - yOffset
-            ),
-            endPoint: UnitPoint(
-                x: 0.5 + xOffset,
-                y: 0.5 + yOffset
-            )
+    // Pixel entrances use this inexpensive static fill. The assembled card owns
+    // the single animated atmosphere, rather than one live atmosphere per block.
+    var driftingBackground: some View {
+        let palette = state.theme.atmosphere(isNightMode: state.isNightMode)
+        return LinearGradient(
+            colors: [palette.colors.first?.opacity(palette.intensity * 0.45) ?? palette.base, palette.base],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
         )
+        .background(palette.base)
     }
 
     private var cardAccessibilityLabel: String {
@@ -637,7 +503,9 @@ struct HUDView: View {
 
     @ViewBuilder
     private var animatedEye: some View {
-        if #available(macOS 14.0, *) {
+        if usesReducedMotion {
+            eyeIcon
+        } else if #available(macOS 14.0, *) {
             eyeIcon
                 .symbolEffect(.pulse, value: state.blinkTrigger)
         } else {
@@ -657,9 +525,9 @@ struct HUDView: View {
             Image(systemName: "eye.trianglebadge.exclamationmark")
                 .opacity(state.isHeld ? 1 : 0)
         }
-        .font(.system(size: HUDLayout.eyeIconFontSize, weight: .semibold))
+        .font(.system(size: HUDLayout.eyeIconFontSize, weight: .light))
         .symbolRenderingMode(.monochrome)
-        .foregroundStyle(state.theme.foreground)
+        .foregroundStyle(EyeBreakDesign.textSecondary)
         .frame(width: HUDLayout.eyeWidth, height: HUDLayout.eyeWidth)
         .animation(.easeInOut(duration: 0.3), value: state.isHeld)
     }
@@ -677,56 +545,19 @@ struct HUDView: View {
     }
 
     private var countdownRing: some View {
-        let lineWidth = HUDLayout.countdownStrokeWidth
-
-        return ZStack {
-            Circle()
-                .stroke(
-                    state.theme.foreground.opacity(0.16),
-                    lineWidth: lineWidth
-                )
-
-            Circle()
-                .trim(from: 0, to: state.progress)
-                .stroke(
-                    state.countdownAccent,
-                    style: StrokeStyle(
-                        lineWidth: lineWidth,
-                        lineCap: .round
-                    )
-                )
-                .animation(
-                    .easeInOut(duration: 0.4),
-                    value: state.focusExercisePhase
-                )
-                .rotationEffect(.degrees(-90))
-                .opacity(state.isHeld ? 0.35 : (state.isPaused ? 0.5 : 1))
-                .animation(
-                    .easeInOut(duration: 0.3),
-                    value: state.isHeld
-                )
-
+        GlowRing(
+            progress: state.progress,
+            diameter: HUDLayout.standardCountdownDiameter,
+            lineWidth: HUDLayout.countdownStrokeWidth
+        ) {
             Text("\(state.displayedSeconds)")
-                .font(
-                    .system(
-                        size: HUDLayout.countdownNumberFontSize,
-                        weight: .semibold,
-                        design: .rounded
-                    )
-                )
+                .font(.system(size: HUDLayout.countdownNumberFontSize, weight: .light))
                 .monospacedDigit()
-                .foregroundStyle(state.theme.foreground)
-                .contentTransition(.numericText())
+                .foregroundStyle(EyeBreakDesign.textPrimary)
+                .contentTransition(usesReducedMotion ? .opacity : .numericText())
         }
-        .frame(
-            width: HUDLayout.standardCountdownDiameter,
-            height: HUDLayout.standardCountdownDiameter
-        )
-        .animation(
-            .easeInOut(duration: 0.4),
-            value: isInFinalThreeSeconds
-        )
-        .animation(.linear(duration: 0.05), value: state.progress)
+        .opacity(state.isHeld ? 0.55 : (state.isPaused ? 0.7 : 1))
+        .animation(.easeInOut(duration: 0.3), value: state.isHeld)
         .accessibilityLabel(
             state.isHeld
                 ? "Countdown held, \(state.displayedSeconds) seconds remaining"
