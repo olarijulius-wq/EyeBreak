@@ -31,6 +31,7 @@ enum ThemeSelection {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    static let breakStyleDefaultsKey = "breakStyle"
     static let selectedThemeDefaultsKey = "selectedTheme"
     static let soundEnabledDefaultsKey = "soundEnabled"
     static let focusExerciseEnabledDefaultsKey = "focusExerciseEnabled"
@@ -71,6 +72,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return storedValue ?? legacyValue ?? false
     }
 
+    private var breakStyle = BreakStyle(
+        rawValue: BreakStyle.normalizedRawValue(
+            UserDefaults.standard.string(forKey: AppDelegate.breakStyleDefaultsKey)
+        )
+    ) ?? BreakStyle.defaultStyle
     private var selectedThemeRawValue = ThemeSelection.normalizedRawValue(
         UserDefaults.standard.string(
             forKey: AppDelegate.selectedThemeDefaultsKey
@@ -108,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private lazy var hudController = HUDPanelController(
         theme: ThemeSelection.resolve(rawValue: selectedThemeRawValue),
+        breakStyle: breakStyle,
         soundEnabled: soundEnabled,
         focusExerciseEnabled: focusExerciseEnabled,
         escapeShortcutEnabled: escapeShortcutEnabled,
@@ -208,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         defaults.register(defaults: [
             BreakScheduler.breakIntervalDefaultsKey: BreakScheduler.defaultIntervalMinutes,
+            Self.breakStyleDefaultsKey: BreakStyle.defaultStyle.rawValue,
             Self.soundEnabledDefaultsKey: true,
             Self.focusExerciseEnabledDefaultsKey: true,
             Self.escapeShortcutEnabledDefaultsKey: false,
@@ -643,6 +651,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.hudController.setCameraAttentionEnabled(true)
             }
 
+        case .breakStyle(let rawValue):
+            guard let style = BreakStyle(rawValue: rawValue) else {
+                return
+            }
+
+            breakStyle = style
+            defaults.set(style.rawValue, forKey: Self.breakStyleDefaultsKey)
+            hudController.setBreakStyle(style)
+
         case .theme(let rawValue):
             guard rawValue == ThemeSelection.autoRawValue
                 || Theme(rawValue: rawValue) != nil
@@ -722,6 +739,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let cameraAttentionEnabled = settings.cameraAttentionEnabled {
             applySettingsChange(.cameraAttention(cameraAttentionEnabled))
         }
+
+        applySettingsChange(.breakStyle(settings.breakStyle))
 
         if let selectedTheme = settings.selectedTheme {
             applySettingsChange(.theme(selectedTheme))

@@ -56,6 +56,7 @@ final class HUDPanelController: NSObject {
     private let displayDimmingController = DisplayDimmingController()
 
     private var theme: Theme
+    private var breakStyle: BreakStyle
     private var soundEnabled: Bool
     private var focusExerciseEnabled: Bool
     private var escapeShortcutEnabled: Bool
@@ -64,6 +65,12 @@ final class HUDPanelController: NSObject {
     private var cameraAttentionEnabled: Bool
     private var activeBreakDisplayID: CGDirectDisplayID?
     private var panel: NonActivatingHUDPanel?
+    private var glowPanel: NonActivatingHUDPanel?
+    private var glowView: EdgeGlowView?
+    private var glowLabelView: FirstMouseHostingView<EdgeGlowLabel>?
+    private var glowLabelContent: EdgeGlowLabelContent?
+    private var presentationScreen: NSScreen?
+    private var countdownHoldReason: EdgeGlowHoldReason?
     private var viewState: HUDViewState?
     private var countdownTimer: Timer?
     private var countdownEndDate: Date?
@@ -112,6 +119,7 @@ final class HUDPanelController: NSObject {
 
     init(
         theme: Theme,
+        breakStyle: BreakStyle = .defaultStyle,
         soundEnabled: Bool,
         focusExerciseEnabled: Bool,
         escapeShortcutEnabled: Bool,
@@ -126,6 +134,7 @@ final class HUDPanelController: NSObject {
         onSilentBreakEnded: @escaping () -> Void = {}
     ) {
         self.theme = theme
+        self.breakStyle = breakStyle
         self.soundEnabled = soundEnabled
         self.focusExerciseEnabled = focusExerciseEnabled
         self.escapeShortcutEnabled = escapeShortcutEnabled
@@ -139,9 +148,23 @@ final class HUDPanelController: NSObject {
         self.onSilentBreakStarted = onSilentBreakStarted
         self.onSilentBreakEnded = onSilentBreakEnded
         super.init()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(accessibilityDisplayOptionsChanged),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screenParametersChanged),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
     }
 
     deinit {
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        NotificationCenter.default.removeObserver(self)
         stopCameraAttention()
         removeEscapeKeyEventTap()
     }
@@ -152,6 +175,21 @@ final class HUDPanelController: NSObject {
         if viewState?.isNightMode != true {
             viewState?.theme = theme
         }
+        if let state = viewState {
+            glowView?.configure(theme: state.theme, isNightMode: state.isNightMode, screen: presentationScreen)
+            refreshGlowPresentation()
+        }
+    }
+
+    func setBreakStyle(_ style: BreakStyle) {
+        guard breakStyle != style else { return }
+        breakStyle = style
+        guard let state = viewState, !state.isDismissing,
+              !state.isSilentMode, !state.isInformational else { return }
+        // Replacing only the windows preserves the running countdown, timing
+        // accounting, camera session, dimming, and eventual history callback.
+        if state.isPaused { setPaused(false) }
+        replacePresentationWindows(for: state, on: presentationScreen)
     }
 
     func setSoundEnabled(_ soundEnabled: Bool) {
@@ -161,6 +199,7 @@ final class HUDPanelController: NSObject {
     func setFocusExerciseEnabled(_ focusExerciseEnabled: Bool) {
         self.focusExerciseEnabled = focusExerciseEnabled
         viewState?.focusExerciseEnabled = focusExerciseEnabled
+        refreshGlowPresentation()
     }
 
     func setEscapeShortcutEnabled(_ escapeShortcutEnabled: Bool) {
@@ -190,6 +229,7 @@ final class HUDPanelController: NSObject {
     }
 
     func setRequireStillnessEnabled(_ requireStillnessEnabled: Bool) {
+        defer { refreshGlowPresentation() }
         guard self.requireStillnessEnabled != requireStillnessEnabled else {
             return
         }
@@ -214,6 +254,7 @@ final class HUDPanelController: NSObject {
     }
 
     func setCameraAttentionEnabled(_ cameraAttentionEnabled: Bool) {
+        defer { refreshGlowPresentation() }
         if
             self.cameraAttentionEnabled != cameraAttentionEnabled,
             let state = viewState,
@@ -237,6 +278,7 @@ final class HUDPanelController: NSObject {
     }
 
     func setPaused(_ shouldPause: Bool) {
+        defer { refreshGlowPresentation() }
         guard !requireStillnessEnabled else {
             return
         }
@@ -396,6 +438,40 @@ final class HUDPanelController: NSObject {
         on targetScreen: NSScreen?,
         breakDisplayID: CGDirectDisplayID?
     ) -> Bool {
+        viewState = state
+        replacePresentationWindows(for: state, on: targetScreen)
+        activeBreakDisplayID = state.isInformational
+            ? nil
+            : breakDisplayID
+        beginCountdown(for: state, startingAt: Date())
+        refreshGlowPresentation()
+
+        if !state.isInformational {
+            dimActiveBreakIfEnabled()
+            startCameraAttentionIfNeeded()
+            playSound(named: "Morse", volume: 0.06)
+
+            if escapeShortcutEnabled {
+                installEscapeKeyMonitors()
+            }
+        }
+
+        return true
+    }
+
+    private func replacePresentationWindows(for state: HUDViewState, on targetScreen: NSScreen?) {
+        closePresentationWindows()
+        presentationScreen = targetScreen ?? NSScreen.main ?? NSScreen.screens.first
+        // First-run notices retain their existing card and interaction rules.
+        if breakStyle == .edgeGlow, !state.isInformational, let screen = presentationScreen {
+            presentEdgeGlow(state, on: screen)
+        } else {
+            panel = makeCardPanel(state, on: presentationScreen)
+            panel?.orderFrontRegardless()
+        }
+    }
+
+    private func makeCardPanel(_ state: HUDViewState, on targetScreen: NSScreen?) -> NonActivatingHUDPanel {
         let rootView = HUDView(
             state: state,
             onDismiss: { [weak self] in
@@ -490,30 +566,142 @@ final class HUDPanelController: NSObject {
         assert(hostingView.layer?.backgroundColor?.alpha == 0)
 
         position(newPanel, on: targetScreen)
+        return newPanel
+    }
 
-        panel = newPanel
-        viewState = state
-        activeBreakDisplayID = state.isInformational
-            ? nil
-            : breakDisplayID
-        beginCountdown(for: state, startingAt: Date())
+    private func presentEdgeGlow(_ state: HUDViewState, on screen: NSScreen) {
+        let edgePanel = makeGlowPanel(frame: screen.frame, ignoresMouseEvents: true)
+        let edges = EdgeGlowView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        edgePanel.contentView = edges
+        edges.configure(theme: state.theme, isNightMode: state.isNightMode, screen: screen)
 
-        if !state.isInformational {
-            dimActiveBreakIfEnabled()
+        let labelPanel = makeGlowPanel(frame: .zero, ignoresMouseEvents: false)
+        let content = EdgeGlowLabelContent(state: state, holdReason: countdownHoldReason)
+        let label = FirstMouseHostingView(rootView: makeGlowLabel(content))
+        label.configureClearBackground()
+        label.handlesRightClickAt = { [weak self] _ in self?.viewState?.isDismissing == false }
+        label.onRightClick = { [weak self] in
+            guard let self, self.dismissAsSkipped() else { return }
+            self.onSnoozeRequested()
         }
+        labelPanel.contentView = label
+        panel = labelPanel
+        glowPanel = edgePanel
+        glowView = edges
+        glowLabelView = label
+        glowLabelContent = content
+        positionGlowLabel(on: screen)
+        refreshGlowPresentation()
 
-        newPanel.orderFrontRegardless()
-
-        if !state.isInformational {
-            startCameraAttentionIfNeeded()
-            playSound(named: "Morse", volume: 0.06)
-
-            if escapeShortcutEnabled {
-                installEscapeKeyMonitors()
-            }
+        labelPanel.alphaValue = 0
+        edgePanel.orderFrontRegardless()
+        labelPanel.orderFrontRegardless()
+        edges.fadeIn()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.2 : 1
+            labelPanel.animator().alphaValue = 1
         }
+    }
 
-        return true
+    private func makeGlowPanel(frame: NSRect, ignoresMouseEvents: Bool) -> NonActivatingHUDPanel {
+        let window = NonActivatingHUDPanel(
+            contentRect: frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        window.isFloatingPanel = true
+        window.level = .statusBar
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.hasShadow = false
+        window.becomesKeyOnlyIfNeeded = true
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.hidesOnDeactivate = false
+        window.isReleasedWhenClosed = false
+        window.animationBehavior = .none
+        window.ignoresMouseEvents = ignoresMouseEvents
+        // Explicit frame avoids NSWindow's screen constraint moving an edge
+        // panel beneath the menu bar or onto the primary display.
+        window.setFrame(frame, display: false)
+        return window
+    }
+
+    private func makeGlowLabel(_ content: EdgeGlowLabelContent) -> EdgeGlowLabel {
+        EdgeGlowLabel(
+            content: content,
+            onDismiss: { [weak self] in
+                self?.requestDismissal(playsSound: true, completedBreak: false)
+            },
+            onHoverChanged: { [weak self] isHovering in self?.setPaused(isHovering) }
+        )
+    }
+
+    private func positionGlowLabel(on screen: NSScreen) {
+        guard let label = glowLabelView, let panel else { return }
+        let fittingSize = label.fittingSize
+        let size = NSSize(width: min(screen.frame.width - 32, ceil(fittingSize.width)), height: ceil(fittingSize.height))
+        // Use menu-bar height even when it is hidden by a full-screen app.
+        // visibleFrame would also include a top-docked Dock, so use status-bar
+        // thickness plus the screen's safe area instead.
+        let topInset = max(screen.safeAreaInsets.top, NSStatusBar.system.thickness) + EyeBreakDesign.Spacing.xs
+        panel.setFrame(NSRect(
+            x: screen.frame.midX - size.width / 2,
+            y: screen.frame.maxY - topInset - size.height,
+            width: size.width,
+            height: size.height
+        ), display: false)
+    }
+
+    private func refreshGlowPresentation() {
+        guard let state = viewState, !state.isDismissing, let glowView else { return }
+        let content = EdgeGlowLabelContent(state: state, holdReason: countdownHoldReason)
+        if content != glowLabelContent {
+            glowLabelContent = content
+            glowLabelView?.rootView = makeGlowLabel(content)
+            if let screen = presentationScreen { positionGlowLabel(on: screen) }
+        }
+        // Keep the phase's visual character while the clock is held. The card's
+        // phase property intentionally hides its phase indicator during a hold.
+        let elapsed = state.duration - state.remainingSeconds
+        let phase: FocusExercisePhase? = state.showsFocusExercise
+            ? (elapsed < 10 ? .initialFar : (elapsed < 15 ? .near : .finalFar))
+            : nil
+        glowView.update(
+            progress: state.progress,
+            phase: phase,
+            isHeld: state.isHeld || state.isPaused,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
+    }
+
+    @objc private func accessibilityDisplayOptionsChanged() {
+        refreshGlowPresentation()
+    }
+
+    @objc private func screenParametersChanged() {
+        guard let state = viewState, !state.isDismissing, glowPanel != nil else { return }
+        let oldID = presentationScreen.flatMap(Self.displayID)
+        let screen = NSScreen.screens.first { Self.displayID(for: $0) == oldID }
+            ?? NSScreen.main ?? NSScreen.screens.first
+        guard let screen else { return }
+        presentationScreen = screen
+        glowPanel?.setFrame(screen.frame, display: false)
+        glowView?.configure(theme: state.theme, isNightMode: state.isNightMode, screen: screen)
+        positionGlowLabel(on: screen)
+        refreshGlowPresentation()
+    }
+
+    private func closePresentationWindows() {
+        panel?.orderOut(nil)
+        panel?.close()
+        glowPanel?.orderOut(nil)
+        glowPanel?.close()
+        panel = nil
+        glowPanel = nil
+        glowView = nil
+        glowLabelView = nil
+        glowLabelContent = nil
     }
 
     func closeImmediately(restoringBrightnessImmediately: Bool = false) {
@@ -536,9 +724,9 @@ final class HUDPanelController: NSObject {
         dismissalWorkItem = nil
         informationalExpirationHandler = nil
 
-        panel?.orderOut(nil)
-        panel?.close()
-        panel = nil
+        closePresentationWindows()
+        presentationScreen = nil
+        countdownHoldReason = nil
         viewState = nil
 
         if wasSilentBreak {
@@ -750,6 +938,7 @@ final class HUDPanelController: NSObject {
     }
 
     @objc private func updateCountdown(_ firedTimer: Timer) {
+        defer { refreshGlowPresentation() }
         guard firedTimer === countdownTimer else {
             return
         }
@@ -793,6 +982,7 @@ final class HUDPanelController: NSObject {
 
     private func shouldHoldCountdown(for state: HUDViewState) -> Bool {
         guard !state.isInformational, !state.isSilentMode else {
+            countdownHoldReason = nil
             return false
         }
 
@@ -800,6 +990,12 @@ final class HUDPanelController: NSObject {
             && (PresentationGuard.secondsSinceLastInput() ?? .greatestFiniteMagnitude)
                 < recentInputThreshold
         let shouldHoldForCamera = cameraAttentionEnabled && isFacingScreen
+        switch (shouldHoldForStillness, shouldHoldForCamera) {
+        case (true, true): countdownHoldReason = .stillnessAndCamera
+        case (true, false): countdownHoldReason = .stillness
+        case (false, true): countdownHoldReason = .camera
+        case (false, false): countdownHoldReason = nil
+        }
         return shouldHoldForStillness || shouldHoldForCamera
     }
 
@@ -844,6 +1040,7 @@ final class HUDPanelController: NSObject {
     }
 
     private func updateCameraAttention(_ isFacingScreen: Bool) {
+        defer { refreshGlowPresentation() }
         guard self.isFacingScreen != isFacingScreen else {
             return
         }
@@ -921,6 +1118,18 @@ final class HUDPanelController: NSObject {
             return true
         }
 
+        let exitDuration: TimeInterval
+        if let glowView {
+            exitDuration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.2 : 0.8
+            glowView.fadeOut(duration: exitDuration)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = exitDuration
+                panel?.animator().alphaValue = 0
+            }
+        } else {
+            exitDuration = state.exitStyle.duration
+        }
+
         let visiblePanel = panel
         let workItem = DispatchWorkItem { [weak self, weak visiblePanel] in
             guard let self, self.panel === visiblePanel else {
@@ -931,7 +1140,7 @@ final class HUDPanelController: NSObject {
         }
         dismissalWorkItem = workItem
         DispatchQueue.main.asyncAfter(
-            deadline: .now() + state.exitStyle.duration + 0.03,
+            deadline: .now() + exitDuration + 0.03,
             execute: workItem
         )
         return true

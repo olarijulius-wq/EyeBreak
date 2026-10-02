@@ -9,6 +9,7 @@ enum SettingsChange {
     case resetTimerAfterAway(Int)
     case requireStillness(Bool)
     case cameraAttention(Bool)
+    case breakStyle(String)
     case theme(String)
     case nightMode(Bool)
     case focusExercise(Bool)
@@ -124,6 +125,8 @@ private struct SettingsView: View {
     @AppStorage(AppDelegate.cameraAttentionEnabledDefaultsKey)
     private var cameraAttentionEnabled = false
 
+    @AppStorage(AppDelegate.breakStyleDefaultsKey)
+    private var selectedBreakStyleRawValue = BreakStyle.defaultStyle.rawValue
     @AppStorage(AppDelegate.selectedThemeDefaultsKey)
     private var selectedThemeRawValue = Theme.graphite.rawValue
     @AppStorage(AppDelegate.nightModeEnabledDefaultsKey)
@@ -201,6 +204,13 @@ private struct SettingsView: View {
                 resetTimerAfterAwayMinutes = BreakScheduler.defaultResetTimerAfterAwayMinutes
             }
 
+            let normalizedStyle = BreakStyle.normalizedRawValue(
+                selectedBreakStyleRawValue
+            )
+            if normalizedStyle != selectedBreakStyleRawValue {
+                selectedBreakStyleRawValue = normalizedStyle
+            }
+
             let normalizedTheme = ThemeSelection.normalizedRawValue(
                 selectedThemeRawValue
             )
@@ -222,6 +232,9 @@ private struct SettingsView: View {
         }
         .onChange(of: cameraAttentionEnabled) { _, newValue in
             actions.apply(.cameraAttention(newValue))
+        }
+        .onChange(of: selectedBreakStyleRawValue) { _, newValue in
+            actions.apply(.breakStyle(newValue))
         }
         .onChange(of: selectedThemeRawValue) { _, newValue in
             actions.apply(.theme(newValue))
@@ -281,7 +294,13 @@ private struct SettingsView: View {
 
     private var appearanceTab: some View {
         Form {
-            Section("Break card") {
+            Section("Break presentation") {
+                Picker("Break style", selection: $selectedBreakStyleRawValue) {
+                    ForEach(BreakStyle.allCases, id: \.rawValue) { style in
+                        Text(style.displayName).tag(style.rawValue)
+                    }
+                }
+
                 Picker("Theme", selection: $selectedThemeRawValue) {
                     Text("Auto").tag(ThemeSelection.autoRawValue)
 
@@ -370,7 +389,21 @@ private struct SettingsView: View {
         return nightModeEnabled && (hour >= 23 || hour < 6)
     }
 
+    @ViewBuilder
     private var themePreview: some View {
+        if selectedBreakStyleRawValue == BreakStyle.card.rawValue {
+            cardPreview
+        } else {
+            EdgeGlowPreview(
+                theme: previewTheme,
+                isNightMode: previewIsNightMode,
+                focusExerciseEnabled: focusExerciseEnabled
+            )
+            .frame(height: 156)
+        }
+    }
+
+    private var cardPreview: some View {
         ZStack {
             AtmosphereBackground(
                 palette: (previewIsNightMode ? Theme.mono : previewTheme)
@@ -505,6 +538,9 @@ private struct SettingsView: View {
             defaultValue: false,
             defaults: defaults
         )
+        selectedBreakStyleRawValue = BreakStyle.normalizedRawValue(
+            defaults.string(forKey: AppDelegate.breakStyleDefaultsKey)
+        )
         selectedThemeRawValue = ThemeSelection.normalizedRawValue(
             defaults.string(forKey: AppDelegate.selectedThemeDefaultsKey)
         )
@@ -574,6 +610,7 @@ private struct SettingsView: View {
         requireStillnessEnabled = false
         cameraAttentionEnabled = false
 
+        selectedBreakStyleRawValue = BreakStyle.defaultStyle.rawValue
         selectedThemeRawValue = Theme.graphite.rawValue
         nightModeEnabled = true
         focusExerciseEnabled = true

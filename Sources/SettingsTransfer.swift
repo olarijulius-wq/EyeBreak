@@ -7,6 +7,7 @@ struct ImportedSettings {
     let snoozeUntil: Date?
     let requireStillnessEnabled: Bool?
     let cameraAttentionEnabled: Bool?
+    let breakStyle: String
     let selectedTheme: String?
     let nightModeEnabled: Bool?
     let focusExerciseEnabled: Bool?
@@ -56,6 +57,9 @@ enum SettingsTransfer {
                 forKey: AppDelegate.cameraAttentionEnabledDefaultsKey,
                 defaultValue: false,
                 defaults: defaults
+            ),
+            breakStyle: BreakStyle.normalizedRawValue(
+                defaults.string(forKey: AppDelegate.breakStyleDefaultsKey)
             ),
             selectedTheme: ThemeSelection.normalizedRawValue(
                 defaults.string(forKey: AppDelegate.selectedThemeDefaultsKey)
@@ -175,6 +179,14 @@ enum SettingsTransfer {
             )
         }
 
+        if let style = archive.settings.breakStyle,
+           BreakStyle(rawValue: style) == nil {
+            throw SettingsTransferError.invalidSetting(
+                key: AppDelegate.breakStyleDefaultsKey,
+                reason: "Use Edge glow or Card."
+            )
+        }
+
         if let theme = archive.settings.selectedTheme,
            theme != ThemeSelection.autoRawValue,
            Theme(rawValue: theme) == nil {
@@ -191,6 +203,9 @@ enum SettingsTransfer {
             snoozeUntil: archive.settings.snoozeUntil,
             requireStillnessEnabled: archive.settings.requireStillnessEnabled,
             cameraAttentionEnabled: archive.settings.cameraAttentionEnabled,
+            // Older archives predate this preference and receive the new default,
+            // even when the current installation has explicitly selected Card.
+            breakStyle: archive.settings.breakStyle ?? BreakStyle.defaultStyle.rawValue,
             selectedTheme: archive.settings.selectedTheme,
             nightModeEnabled: archive.settings.nightModeEnabled,
             focusExerciseEnabled: archive.settings.focusExerciseEnabled,
@@ -267,6 +282,7 @@ private struct SettingsPayload: Codable {
     let snoozeUntil: Date?
     let requireStillnessEnabled: Bool?
     let cameraAttentionEnabled: Bool?
+    let breakStyle: String?
     let selectedTheme: String?
     let nightModeEnabled: Bool?
     let focusExerciseEnabled: Bool?
